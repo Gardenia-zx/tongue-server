@@ -1,0 +1,51 @@
+server:
+  port: 8080
+
+spring:
+  datasource:
+    url: ${MYSQL_URL:jdbc:mysql://127.0.0.1:3306/tongue_app?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:200677zxZX}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    hibernate:
+      ddl-auto: ${JPA_DDL_AUTO:update}
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: false
+        dialect: org.hibernate.dialect.MySQL8Dialect
+  redis:
+    host: ${REDIS_HOST:127.0.0.1}
+    port: ${REDIS_PORT:6379}
+    password: ${REDIS_PASSWORD:}
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 12MB
+  jackson:
+    default-property-inclusion: non_null
+
+tongue:
+  auth:
+    jwt-secret: ${TONGUE_JWT_SECRET:change-me-to-a-production-secret-with-at-least-32-characters}
+    token-ttl-seconds: 604800
+    sms-ttl-seconds: 300
+    dev-sms-code: ${TONGUE_DEV_SMS_CODE:123456}
+    expose-dev-sms-code: ${TONGUE_EXPOSE_DEV_SMS_CODE:true}
+    allow-dev-user-id: ${TONGUE_ALLOW_DEV_USER_ID:true}
+  async:
+    core-pool-size: 4
+    max-pool-size: 12
+    queue-capacity: 200
+  agent:
+    base-url: http://127.0.0.1:8000
+    run-path: /api/v1/agent/run
+    connect-timeout-millis: 5000
+    read-timeout-millis: 60000
+  storage:
+    mode: local
+    public-base-url: ${TONGUE_PUBLIC_BASE_URL:}
+    upload-root: D:/tongue/storage/uploads
+    report-root: D:/tongue/storage/reports
+    max-image-size-bytes: 10485760
