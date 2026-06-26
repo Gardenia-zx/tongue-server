@@ -1,10 +1,12 @@
 -- Agent Chat V2 production schema
+-- This module intentionally uses agent_chat_* tables so it does not share
+-- Hibernate table mappings with the existing agent.context persistence module.
 -- Apply this migration before enabling POST /api/v2/agent/chat in environments
 -- where spring.jpa.hibernate.ddl-auto is validate/none.
 
 SET NAMES utf8mb4;
 
-CREATE TABLE IF NOT EXISTS `agent_conversation` (
+CREATE TABLE IF NOT EXISTS `agent_chat_conversation` (
   `id` BIGINT NOT NULL AUTO_INCREMENT,
   `conversation_id` VARCHAR(128) NOT NULL,
   `user_id` BIGINT NOT NULL,
@@ -15,13 +17,13 @@ CREATE TABLE IF NOT EXISTS `agent_conversation` (
   `created_at` DATETIME NOT NULL,
   `updated_at` DATETIME NOT NULL,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_agent_conversation_user_conversation` (`user_id`, `conversation_id`),
-  UNIQUE KEY `uk_agent_conversation_user_thread_epoch` (`user_id`, `thread_id`, `thread_epoch`),
-  KEY `idx_agent_conversation_user_updated` (`user_id`, `updated_at`),
-  KEY `idx_agent_conversation_active_report` (`active_report_id`)
+  UNIQUE KEY `uk_agent_chat_conversation_user_conversation` (`user_id`, `conversation_id`),
+  UNIQUE KEY `uk_agent_chat_conversation_user_thread_epoch` (`user_id`, `thread_id`, `thread_epoch`),
+  KEY `idx_agent_chat_conversation_user_updated` (`user_id`, `updated_at`),
+  KEY `idx_agent_chat_conversation_active_report` (`active_report_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS `agent_turn` (
+CREATE TABLE IF NOT EXISTS `agent_chat_turn` (
   `id` BIGINT NOT NULL AUTO_INCREMENT,
   `turn_id` VARCHAR(128) NOT NULL,
   `conversation_id` VARCHAR(128) NOT NULL,
@@ -41,13 +43,13 @@ CREATE TABLE IF NOT EXISTS `agent_turn` (
   `created_at` DATETIME NOT NULL,
   `updated_at` DATETIME NOT NULL,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_agent_turn_user_request` (`user_id`, `request_id`),
-  UNIQUE KEY `uk_agent_turn_turn_id` (`turn_id`),
-  KEY `idx_agent_turn_conversation_created` (`conversation_id`, `created_at`),
-  KEY `idx_agent_turn_user_status` (`user_id`, `status`)
+  UNIQUE KEY `uk_agent_chat_turn_user_request` (`user_id`, `request_id`),
+  UNIQUE KEY `uk_agent_chat_turn_turn_id` (`turn_id`),
+  KEY `idx_agent_chat_turn_conversation_created` (`conversation_id`, `created_at`),
+  KEY `idx_agent_chat_turn_user_status` (`user_id`, `status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS `agent_message` (
+CREATE TABLE IF NOT EXISTS `agent_chat_message` (
   `id` BIGINT NOT NULL AUTO_INCREMENT,
   `message_id` VARCHAR(128) NOT NULL,
   `turn_id` VARCHAR(128) NOT NULL,
@@ -63,9 +65,9 @@ CREATE TABLE IF NOT EXISTS `agent_message` (
   `created_at` DATETIME NOT NULL,
   `updated_at` DATETIME NOT NULL,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_agent_message_message_id` (`message_id`),
-  KEY `idx_agent_message_conversation_sequence` (`conversation_id`, `sequence_no`),
-  KEY `idx_agent_message_turn_id` (`turn_id`),
-  KEY `idx_agent_message_user_created` (`user_id`, `created_at`),
-  CONSTRAINT `chk_agent_message_user_report` CHECK (`role` <> 'USER' OR `report_id` IS NULL)
+  UNIQUE KEY `uk_agent_chat_message_message_id` (`message_id`),
+  KEY `idx_agent_chat_message_conversation_sequence` (`conversation_id`, `sequence_no`),
+  KEY `idx_agent_chat_message_turn_id` (`turn_id`),
+  KEY `idx_agent_chat_message_user_created` (`user_id`, `created_at`),
+  CONSTRAINT `chk_agent_chat_message_user_report` CHECK (`role` <> 'USER' OR `report_id` IS NULL)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
