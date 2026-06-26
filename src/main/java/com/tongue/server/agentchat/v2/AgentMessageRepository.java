@@ -13,4 +13,6 @@ public interface AgentMessageRepository extends JpaRepository<AgentMessageEntity
     );
 
     long countByUserIdAndConversationId(Long userId, String conversationId);
+
+    boolean existsByMessageId(String messageId);
 }
