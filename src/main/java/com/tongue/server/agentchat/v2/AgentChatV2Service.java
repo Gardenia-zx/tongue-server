@@ -60,9 +60,13 @@ public class AgentChatV2Service {
 
         AgentTurnEntity turn = begin.getTurn();
         try {
-            List<AgentMessageEntity> recentMessages = shouldLoadHistory(bindingMode)
-                    ? turnStore.recentMessages(userId, conversationId)
-                    : Collections.<AgentMessageEntity>emptyList();
+            List<AgentMessageEntity> recentMessages;
+            if (shouldLoadHistory(bindingMode)) {
+                recentMessages = turnStore.recentMessages(userId, conversationId);
+                recentMessages.removeIf(item -> turnId.equals(item.getTurnId()));
+            } else {
+                recentMessages = Collections.emptyList();
+            }
 
             AgentGatewayClientV2.Invocation invocation = new AgentGatewayClientV2.Invocation();
             invocation.setUserId(userId);
