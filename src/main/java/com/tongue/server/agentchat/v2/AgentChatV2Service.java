@@ -34,9 +34,6 @@ public class AgentChatV2Service {
         Long boundReportId = "ACTIVE_REPORT".equals(bindingMode)
                 ? request.getContextBinding().getReportId()
                 : null;
-        JsonNode activeReport = boundReportId == null
-                ? null
-                : turnStore.loadOwnedReport(userId, boundReportId);
 
         String turnId = "turn_" + UUID.randomUUID().toString();
         String assistantMessageId = "msg_assistant_" + UUID.randomUUID().toString();
@@ -60,6 +57,10 @@ public class AgentChatV2Service {
 
         AgentTurnEntity turn = begin.getTurn();
         try {
+            JsonNode activeReport = boundReportId == null
+                    ? null
+                    : turnStore.loadOwnedReport(userId, boundReportId);
+
             List<AgentMessageEntity> recentMessages;
             if (shouldLoadHistory(bindingMode)) {
                 recentMessages = turnStore.recentMessages(userId, conversationId);
