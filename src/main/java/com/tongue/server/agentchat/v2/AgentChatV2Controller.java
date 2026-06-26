@@ -2,17 +2,15 @@ package com.tongue.server.agentchat.v2;
 
 import com.tongue.server.agentchat.v2.AgentChatTurnStore.AgentChatConflictException;
 import com.tongue.server.agentchat.v2.AgentGatewayClientV2.AgentGatewayException;
+import com.tongue.server.auth.AuthContext;
 import com.tongue.server.common.ApiResponse;
-import com.tongue.server.config.AuthProperties;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import javax.servlet.http.HttpServletRequest;
 import javax.validation.Valid;
 
 @RestController
@@ -20,32 +18,27 @@ import javax.validation.Valid;
 public class AgentChatV2Controller {
 
     private final AgentChatV2Service service;
-    private final AuthProperties authProperties;
 
-    public AgentChatV2Controller(AgentChatV2Service service, AuthProperties authProperties) {
+    public AgentChatV2Controller(AgentChatV2Service service) {
         this.service = service;
-        this.authProperties = authProperties;
     }
 
     @PostMapping("/chat")
     public ResponseEntity<ApiResponse<AgentChatV2Response>> chat(
-            @Valid @RequestBody AgentChatV2Request request,
-            HttpServletRequest servletRequest,
-            @RequestHeader(value = "X-User-Id", required = false) Long developmentUserId
+            @Valid @RequestBody AgentChatV2Request request
     ) {
-        Long userId = resolveUserId(servletRequest, developmentUserId);
-        if (userId == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(ApiResponse.<AgentChatV2Response>error(40101, "未登录或登录状态已失效", null));
-        }
-
+        Long userId = AuthContext.requireUserId();
         try {
             AgentChatV2Response response = service.chat(userId.longValue(), request);
             return ResponseEntity.ok(ApiResponse.success(response, response.getTraceId()));
         } catch (AgentChatConflictException ex) {
-            int code = "IDEMPOTENCY_CONFLICT".equals(ex.getCode()) ? 40901 : 40902;
-            return ResponseEntity.status(HttpStatus.CONFLICT)
-                    .body(ApiResponse.<AgentChatV2Response>error(code, ex.getCode() + ": " + ex.getMessage(), null));
+            HttpStatus status = conflictStatus(ex.getCode());
+            return ResponseEntity.status(status)
+                    .body(ApiResponse.<AgentChatV2Response>error(
+                            errorCode(ex.getCode()),
+                            ex.getCode() + ": " + ex.getMessage(),
+                            null
+                    ));
         } catch (AgentGatewayException ex) {
             return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
                     .body(ApiResponse.<AgentChatV2Response>error(50201, ex.getCode() + ": " + ex.getMessage(), null));
@@ -55,32 +48,27 @@ public class AgentChatV2Controller {
         }
     }
 
-    private Long resolveUserId(HttpServletRequest request, Long developmentUserId) {
-        String[] attributeNames = {"userId", "currentUserId", "authenticatedUserId"};
-        for (String attributeName : attributeNames) {
-            Object value = request.getAttribute(attributeName);
-            Long parsed = parseUserId(value);
-            if (parsed != null) {
-                return parsed;
-            }
+    private HttpStatus conflictStatus(String code) {
+        if ("IDEMPOTENCY_CONFLICT".equals(code) || "AGENT_REQUEST_IN_PROGRESS".equals(code)) {
+            return HttpStatus.CONFLICT;
         }
-        if (authProperties.isAllowDevUserId()) {
-            return developmentUserId;
+        if ("REPORT_NOT_FOUND_OR_FORBIDDEN".equals(code)) {
+            return HttpStatus.NOT_FOUND;
         }
-        return null;
+        if ("AGENT_TURN_MISMATCH".equals(code)
+                || "INVALID_AGENT_RESPONSE".equals(code)
+                || "IDEMPOTENCY_RESPONSE_CORRUPTED".equals(code)) {
+            return HttpStatus.BAD_GATEWAY;
+        }
+        return HttpStatus.BAD_REQUEST;
     }
 
-    private Long parseUserId(Object value) {
-        if (value instanceof Number) {
-            return ((Number) value).longValue();
-        }
-        if (value instanceof String) {
-            try {
-                return Long.valueOf((String) value);
-            } catch (NumberFormatException ignored) {
-                return null;
-            }
-        }
-        return null;
+    private int errorCode(String code) {
+        if ("IDEMPOTENCY_CONFLICT".equals(code)) return 40901;
+        if ("AGENT_REQUEST_IN_PROGRESS".equals(code)) return 40902;
+        if ("REPORT_NOT_FOUND_OR_FORBIDDEN".equals(code)) return 40401;
+        if ("AGENT_TURN_MISMATCH".equals(code)) return 50202;
+        if ("INVALID_AGENT_RESPONSE".equals(code)) return 50203;
+        return 40001;
     }
 }
