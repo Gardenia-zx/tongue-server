@@ -63,9 +63,6 @@ public class AgentChatTurnStore {
                 .orElseGet(() -> newConversation(userId, conversationId, request.getThreadId()));
         conversation.setThreadId(request.getThreadId());
         conversation.setUpdatedAt(LocalDateTime.now());
-        if (boundReportId != null) {
-            conversation.setActiveReportId(boundReportId);
-        }
         conversationRepository.save(conversation);
 
         LocalDateTime now = LocalDateTime.now();
