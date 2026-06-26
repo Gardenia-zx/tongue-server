@@ -12,14 +12,14 @@ import java.time.LocalDateTime;
 
 @Entity
 @Table(
-        name = "agent_conversation",
+        name = "agent_chat_conversation",
         uniqueConstraints = {
-                @UniqueConstraint(name = "uk_agent_conversation_user_conversation", columnNames = {"user_id", "conversation_id"}),
-                @UniqueConstraint(name = "uk_agent_conversation_user_thread_epoch", columnNames = {"user_id", "thread_id", "thread_epoch"})
+                @UniqueConstraint(name = "uk_agent_chat_conversation_user_conversation", columnNames = {"user_id", "conversation_id"}),
+                @UniqueConstraint(name = "uk_agent_chat_conversation_user_thread_epoch", columnNames = {"user_id", "thread_id", "thread_epoch"})
         },
         indexes = {
-                @Index(name = "idx_agent_conversation_user_updated", columnList = "user_id,updated_at"),
-                @Index(name = "idx_agent_conversation_active_report", columnList = "active_report_id")
+                @Index(name = "idx_agent_chat_conversation_user_updated", columnList = "user_id,updated_at"),
+                @Index(name = "idx_agent_chat_conversation_active_report", columnList = "active_report_id")
         }
 )
 public class AgentConversationEntity {
