@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 import javax.validation.Valid;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 @RestController
@@ -58,13 +59,24 @@ public class AgentChatV2Controller {
             @RequestHeader(value = "X-Internal-Api-Key", required = false) String suppliedKey,
             @RequestBody Map<String, Object> request
     ) {
-        if (!validInternalKey(suppliedKey)) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        if (!validInternalKey(suppliedKey)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(statusBody("FORBIDDEN", reportId, "invalid_internal_api_key"));
+        }
         Map<String, Object> body = service.loadReportSections(reportId, request);
         String resultStatus = String.valueOf(body.get("status"));
         if ("NOT_FOUND".equals(resultStatus)) return ResponseEntity.status(HttpStatus.NOT_FOUND).body(body);
         if ("VERSION_MISMATCH".equals(resultStatus)) return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
         if (!"OK".equals(resultStatus)) return ResponseEntity.badRequest().body(body);
         return ResponseEntity.ok(body);
+    }
+
+    private Map<String, Object> statusBody(String status, Long reportId, String error) {
+        Map<String, Object> body = new LinkedHashMap<String, Object>();
+        body.put("status", status);
+        body.put("report_id", reportId);
+        body.put("error", error);
+        return body;
     }
 
     private boolean validInternalKey(String suppliedKey) {
