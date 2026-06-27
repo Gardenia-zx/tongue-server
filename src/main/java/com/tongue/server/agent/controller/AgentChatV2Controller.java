@@ -3,7 +3,6 @@ package com.tongue.server.agent.controller;
 import com.tongue.server.agent.dto.AgentChatV2Request;
 import com.tongue.server.agent.dto.AgentChatV2Response;
 import com.tongue.server.agent.service.AgentChatV2Service;
-import com.tongue.server.agent.service.AgentChatTurnStore;
 import com.tongue.server.agent.service.AgentChatTurnStore.AgentChatConflictException;
 import com.tongue.server.agent.service.AgentGatewayClientV2.AgentGatewayException;
 import com.tongue.server.auth.AuthContext;
@@ -26,14 +25,12 @@ import java.util.Map;
 public class AgentChatV2Controller {
 
     private final AgentChatV2Service service;
-    private final AgentChatTurnStore turnStore;
 
     @Value("${tongue.agent.internal-api-key:}")
     private String internalApiKey;
 
-    public AgentChatV2Controller(AgentChatV2Service service, AgentChatTurnStore turnStore) {
+    public AgentChatV2Controller(AgentChatV2Service service) {
         this.service = service;
-        this.turnStore = turnStore;
     }
 
     @PostMapping("/api/v2/agent/chat")
@@ -70,7 +67,7 @@ public class AgentChatV2Controller {
         if (!validInternalKey(suppliedKey)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
-        Map<String, Object> body = turnStore.loadReportSections(reportId, request);
+        Map<String, Object> body = service.loadReportSections(reportId, request);
         String resultStatus = String.valueOf(body.get("status"));
         if ("NOT_FOUND".equals(resultStatus)) return ResponseEntity.status(HttpStatus.NOT_FOUND).body(body);
         if ("VERSION_MISMATCH".equals(resultStatus)) return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
