@@ -46,9 +46,6 @@ public class AgentChatService {
         String userMessageId = "user_" + clientRequestId;
         String assistantMessageId = "assistant_" + clientRequestId;
         String turnId = String.valueOf(conversation.id) + ":" + userMessageId + ":" + assistantMessageId;
-        Map<String, Object> contextBundle =
-                conversationContextService.buildContextBundleForChat(conversation, messageText);
-
         AgentRunRequest.AgentMessage message = new AgentRunRequest.AgentMessage();
         message.setMessageId(userMessageId);
         message.setRole("user");
@@ -58,7 +55,6 @@ public class AgentChatService {
 
         Map<String, Object> extra = new LinkedHashMap<String, Object>();
         extra.put("source", "tongue-server-chat");
-        extra.put("context_bundle", contextBundle);
 
         AgentRunRequest.AgentClientContext clientContext = new AgentRunRequest.AgentClientContext();
         clientContext.setPage("ai_chat");
@@ -69,9 +65,9 @@ public class AgentChatService {
 
         Map<String, Object> memory = new LinkedHashMap<String, Object>();
         memory.put("can_read", true);
-        memory.put("can_write", false);
+        memory.put("can_write", true);
         Map<String, Object> contextOptions = new LinkedHashMap<String, Object>();
-        contextOptions.put("mode", "stateless");
+        contextOptions.put("mode", "stateful");
         Map<String, Object> options = new LinkedHashMap<String, Object>();
         options.put("memory", memory);
         options.put("context", contextOptions);
@@ -91,7 +87,7 @@ public class AgentChatService {
         request.setReportId(conversation.activeReportId);
         request.setMessage(message);
         request.setClientContext(clientContext);
-        request.setContextBundle(contextBundle);
+        request.setContextBundle(new LinkedHashMap<String, Object>());
         request.setOptions(options);
 
         Map<String, Object> userMetadata = new LinkedHashMap<String, Object>();

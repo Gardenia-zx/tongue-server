@@ -65,13 +65,7 @@ public class AgentChatV2Service {
                     ? null
                     : turnStore.loadOwnedReport(userId, boundReportId);
 
-            List<AgentChatMessageEntity> recentMessages;
-            if (shouldLoadHistory(bindingMode)) {
-                recentMessages = turnStore.recentMessages(userId, conversationId);
-                recentMessages.removeIf(item -> turnId.equals(item.getTurnId()));
-            } else {
-                recentMessages = Collections.emptyList();
-            }
+            List<AgentChatMessageEntity> recentMessages = Collections.emptyList();
 
             AgentGatewayClientV2.Invocation invocation = new AgentGatewayClientV2.Invocation();
             invocation.setUserId(userId);
@@ -154,10 +148,6 @@ public class AgentChatV2Service {
             throw new AgentChatConflictException("REPORT_ID_REQUIRED", "ACTIVE_REPORT 模式必须提供 report_id");
         }
         return mode;
-    }
-
-    private boolean shouldLoadHistory(String bindingMode) {
-        return "LAST_ANSWER".equals(bindingMode) || "ACTIVE_REPORT".equals(bindingMode);
     }
 
     private void validateAgentOwnership(JsonNode response, String requestId, String turnId) {

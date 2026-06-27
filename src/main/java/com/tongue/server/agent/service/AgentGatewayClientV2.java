@@ -40,6 +40,26 @@ public class AgentGatewayClientV2 {
     }
 
     public JsonNode run(Invocation invocation) {
+        ObjectNode payload = buildPayload(invocation);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        try {
+            ResponseEntity<JsonNode> response = restTemplate.postForEntity(
+                    properties.getBaseUrl() + properties.getRunPath(),
+                    new HttpEntity<JsonNode>(payload, headers),
+                    JsonNode.class
+            );
+            if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
+                throw new AgentGatewayException("AGENT_EMPTY_RESPONSE", "Agent 返回空响应或非 2xx 状态");
+            }
+            return response.getBody();
+        } catch (RestClientException ex) {
+            throw new AgentGatewayException("AGENT_CALL_FAILED", ex.getMessage(), ex);
+        }
+    }
+
+    ObjectNode buildPayload(Invocation invocation) {
         ObjectNode payload = objectMapper.createObjectNode();
         payload.put("schema_version", "1.0");
         payload.put("request_id", invocation.getRequestId());
@@ -71,37 +91,31 @@ public class AgentGatewayClientV2 {
         }
         clientContext.set("extra", objectMapper.valueToTree(invocation.getClientContext()));
 
-        ObjectNode contextBundle = payload.putObject("context_bundle");
-        contextBundle.put("mode", invocation.getContextBinding());
-        contextBundle.put("conversation_id", invocation.getConversationId());
-        contextBundle.set("recent_messages", toRecentMessages(invocation.getRecentMessages()));
-        if (invocation.getActiveReport() != null) {
-            contextBundle.set("active_report", invocation.getActiveReport());
+        String contextMode = invocation.getContextMode();
+        if ("mysql_recovery".equals(contextMode)) {
+            ObjectNode contextBundle = payload.putObject("context_bundle");
+            contextBundle.put("mode", "mysql_recovery");
+            contextBundle.put("conversation_id", invocation.getConversationId());
+            contextBundle.set("recent_messages", toRecentMessages(invocation.getRecentMessages()));
+            if (invocation.getActiveReport() != null) {
+                contextBundle.set("active_report", invocation.getActiveReport());
+            }
         }
 
         ObjectNode options = payload.putObject("options");
-        options.put("memory.can_read", true);
-        options.put("memory.can_write", true);
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        try {
-            ResponseEntity<JsonNode> response = restTemplate.postForEntity(
-                    properties.getBaseUrl() + properties.getRunPath(),
-                    new HttpEntity<JsonNode>(payload, headers),
-                    JsonNode.class
-            );
-            if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
-                throw new AgentGatewayException("AGENT_EMPTY_RESPONSE", "Agent 返回空响应或非 2xx 状态");
-            }
-            return response.getBody();
-        } catch (RestClientException ex) {
-            throw new AgentGatewayException("AGENT_CALL_FAILED", ex.getMessage(), ex);
-        }
+        ObjectNode contextOptions = options.putObject("context");
+        contextOptions.put("mode", contextMode);
+        ObjectNode memoryOptions = options.putObject("memory");
+        memoryOptions.put("can_read", invocation.isMemoryCanRead());
+        memoryOptions.put("can_write", invocation.isMemoryCanWrite());
+        return payload;
     }
 
     private ArrayNode toRecentMessages(List<AgentChatMessageEntity> messages) {
         ArrayNode result = objectMapper.createArrayNode();
+        if (messages == null) {
+            return result;
+        }
         for (AgentChatMessageEntity item : messages) {
             ObjectNode message = result.addObject();
             message.put("message_id", item.getMessageId());
@@ -128,6 +142,9 @@ public class AgentGatewayClientV2 {
         private JsonNode activeReport;
         private List<AgentChatMessageEntity> recentMessages;
         private Map<String, Object> clientContext;
+        private String contextMode = "stateful";
+        private boolean memoryCanRead = true;
+        private boolean memoryCanWrite = true;
 
         public long getUserId() { return userId; }
         public void setUserId(long userId) { this.userId = userId; }
@@ -159,6 +176,16 @@ public class AgentGatewayClientV2 {
         public void setRecentMessages(List<AgentChatMessageEntity> recentMessages) { this.recentMessages = recentMessages; }
         public Map<String, Object> getClientContext() { return clientContext; }
         public void setClientContext(Map<String, Object> clientContext) { this.clientContext = clientContext; }
+        public String getContextMode() {
+            return contextMode == null || contextMode.trim().isEmpty()
+                    ? "stateful"
+                    : contextMode.trim().toLowerCase();
+        }
+        public void setContextMode(String contextMode) { this.contextMode = contextMode; }
+        public boolean isMemoryCanRead() { return memoryCanRead; }
+        public void setMemoryCanRead(boolean memoryCanRead) { this.memoryCanRead = memoryCanRead; }
+        public boolean isMemoryCanWrite() { return memoryCanWrite; }
+        public void setMemoryCanWrite(boolean memoryCanWrite) { this.memoryCanWrite = memoryCanWrite; }
     }
 
     public static class AgentGatewayException extends RuntimeException {
