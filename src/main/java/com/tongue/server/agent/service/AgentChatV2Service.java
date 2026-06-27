@@ -161,6 +161,12 @@ public class AgentChatV2Service {
             if (value != null) sections.put(section, value);
         }
 
+        if (sections.isEmpty()) {
+            Map<String, Object> result = statusBody("NO_REPORT_CONTENT", reportId);
+            result.put("report_version", currentVersion);
+            return result;
+        }
+
         Map<String, Object> result = statusBody("OK", reportId);
         result.put("report_version", currentVersion);
         result.put("sections", sections);
@@ -169,14 +175,52 @@ public class AgentChatV2Service {
 
     private Object sectionValue(String section, TongueReportEntity report, JsonNode draft, JsonNode evidence) {
         if ("feature_summary".equals(section)) return report.featureSummary;
-        if ("interpretation".equals(section)) return nodeOrFallback(firstNode(draft, "interpretation", "general_interpretation", "summary"), report.summary);
-        if ("dietary_advice".equals(section)) return jsonValue(firstNode(draft, "dietary_advice", "dietaryAdvice", "diet_advice"));
-        if ("exercise_advice".equals(section)) return jsonValue(firstNode(draft, "exercise_advice", "exerciseAdvice"));
-        if ("lifestyle_advice".equals(section)) return jsonValue(firstNode(draft, "lifestyle_advice", "health_notes", "health_suggestions"));
+        if ("interpretation".equals(section)) {
+            return nodeOrFallback(firstNode(draft, "interpretation", "general_interpretation", "summary"), report.summary);
+        }
+        if ("dietary_advice".equals(section)) {
+            return jsonValue(firstNode(draft, "dietary_advice", "dietaryAdvice", "diet_advice"));
+        }
+        if ("exercise_advice".equals(section)) {
+            return jsonValue(firstNode(draft, "exercise_advice", "exerciseAdvice"));
+        }
+        if ("lifestyle_advice".equals(section)) {
+            return jsonValue(firstNode(draft, "lifestyle_advice", "health_notes", "health_suggestions"));
+        }
         if ("risk_disclaimer".equals(section)) return report.riskDisclaimer;
         if ("rag_evidence_summary".equals(section)) return jsonValue(evidence);
-        if ("full_report".equals(section)) return jsonValue(draft);
+        if ("full_report".equals(section)) return buildDisplayReport(report, draft, evidence);
         return null;
+    }
+
+    private Map<String, Object> buildDisplayReport(
+            TongueReportEntity report,
+            JsonNode draft,
+            JsonNode evidence
+    ) {
+        Map<String, Object> result = new LinkedHashMap<String, Object>();
+        putIfPresent(result, "summary", report.summary);
+        putIfPresent(result, "feature_summary", report.featureSummary);
+        putIfPresent(result, "interpretation",
+                nodeOrFallback(firstNode(draft, "interpretation", "general_interpretation", "summary"), report.summary));
+        putIfPresent(result, "dietary_advice",
+                jsonValue(firstNode(draft, "dietary_advice", "dietaryAdvice", "diet_advice")));
+        putIfPresent(result, "exercise_advice",
+                jsonValue(firstNode(draft, "exercise_advice", "exerciseAdvice")));
+        putIfPresent(result, "lifestyle_advice",
+                jsonValue(firstNode(draft, "lifestyle_advice", "health_notes", "health_suggestions")));
+        putIfPresent(result, "risk_disclaimer", report.riskDisclaimer);
+        putIfPresent(result, "rag_evidence_summary", jsonValue(evidence));
+        if (draft != null && !draft.isNull()) {
+            putIfPresent(result, "structured_report", jsonValue(draft));
+        }
+        return result;
+    }
+
+    private void putIfPresent(Map<String, Object> target, String key, Object value) {
+        if (value == null) return;
+        if (value instanceof String && ((String) value).trim().isEmpty()) return;
+        target.put(key, value);
     }
 
     private JsonNode firstNode(JsonNode root, String... keys) {
