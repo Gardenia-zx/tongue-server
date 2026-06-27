@@ -3,30 +3,40 @@ package com.tongue.server.agent.controller;
 import com.tongue.server.agent.dto.AgentChatV2Request;
 import com.tongue.server.agent.dto.AgentChatV2Response;
 import com.tongue.server.agent.service.AgentChatV2Service;
+import com.tongue.server.agent.service.AgentChatTurnStore;
 import com.tongue.server.agent.service.AgentChatTurnStore.AgentChatConflictException;
 import com.tongue.server.agent.service.AgentGatewayClientV2.AgentGatewayException;
 import com.tongue.server.auth.AuthContext;
 import com.tongue.server.common.ApiResponse;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
 import javax.validation.Valid;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.Map;
 
 @RestController
-@RequestMapping("/api/v2/agent")
 public class AgentChatV2Controller {
 
     private final AgentChatV2Service service;
+    private final AgentChatTurnStore turnStore;
 
-    public AgentChatV2Controller(AgentChatV2Service service) {
+    @Value("${tongue.agent.internal-api-key:}")
+    private String internalApiKey;
+
+    public AgentChatV2Controller(AgentChatV2Service service, AgentChatTurnStore turnStore) {
         this.service = service;
+        this.turnStore = turnStore;
     }
 
-    @PostMapping("/chat")
+    @PostMapping("/api/v2/agent/chat")
     public ResponseEntity<ApiResponse<AgentChatV2Response>> chat(
             @Valid @RequestBody AgentChatV2Request request
     ) {
@@ -51,18 +61,37 @@ public class AgentChatV2Controller {
         }
     }
 
+    @PostMapping("/internal/agent/reports/{reportId}/sections")
+    public ResponseEntity<Map<String, Object>> reportSections(
+            @PathVariable Long reportId,
+            @RequestHeader(value = "X-Internal-Api-Key", required = false) String suppliedKey,
+            @RequestBody Map<String, Object> request
+    ) {
+        if (!validInternalKey(suppliedKey)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+        Map<String, Object> body = turnStore.loadReportSections(reportId, request);
+        String resultStatus = String.valueOf(body.get("status"));
+        if ("NOT_FOUND".equals(resultStatus)) return ResponseEntity.status(HttpStatus.NOT_FOUND).body(body);
+        if ("VERSION_MISMATCH".equals(resultStatus)) return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+        if (!"OK".equals(resultStatus)) return ResponseEntity.badRequest().body(body);
+        return ResponseEntity.ok(body);
+    }
+
+    private boolean validInternalKey(String suppliedKey) {
+        if (internalApiKey == null || internalApiKey.trim().isEmpty() || suppliedKey == null) return false;
+        return MessageDigest.isEqual(
+                internalApiKey.trim().getBytes(StandardCharsets.UTF_8),
+                suppliedKey.getBytes(StandardCharsets.UTF_8)
+        );
+    }
+
     private HttpStatus conflictStatus(String code) {
-        if ("IDEMPOTENCY_CONFLICT".equals(code) || "AGENT_REQUEST_IN_PROGRESS".equals(code)) {
-            return HttpStatus.CONFLICT;
-        }
-        if ("REPORT_NOT_FOUND_OR_FORBIDDEN".equals(code)) {
-            return HttpStatus.NOT_FOUND;
-        }
+        if ("IDEMPOTENCY_CONFLICT".equals(code) || "AGENT_REQUEST_IN_PROGRESS".equals(code)) return HttpStatus.CONFLICT;
+        if ("REPORT_NOT_FOUND_OR_FORBIDDEN".equals(code)) return HttpStatus.NOT_FOUND;
         if ("AGENT_TURN_MISMATCH".equals(code)
                 || "INVALID_AGENT_RESPONSE".equals(code)
-                || "IDEMPOTENCY_RESPONSE_CORRUPTED".equals(code)) {
-            return HttpStatus.BAD_GATEWAY;
-        }
+                || "IDEMPOTENCY_RESPONSE_CORRUPTED".equals(code)) return HttpStatus.BAD_GATEWAY;
         return HttpStatus.BAD_REQUEST;
     }
 
