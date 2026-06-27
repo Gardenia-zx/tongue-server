@@ -26,7 +26,7 @@ public class AgentChatV2Controller {
 
     private final AgentChatV2Service service;
 
-    @Value("${tongue.agent.internal-api-key:}")
+    @Value("${JAVA_INTERNAL_API_KEY:}")
     private String internalApiKey;
 
     public AgentChatV2Controller(AgentChatV2Service service) {
@@ -34,21 +34,15 @@ public class AgentChatV2Controller {
     }
 
     @PostMapping("/api/v2/agent/chat")
-    public ResponseEntity<ApiResponse<AgentChatV2Response>> chat(
-            @Valid @RequestBody AgentChatV2Request request
-    ) {
+    public ResponseEntity<ApiResponse<AgentChatV2Response>> chat(@Valid @RequestBody AgentChatV2Request request) {
         Long userId = AuthContext.requireUserId();
         try {
             AgentChatV2Response response = service.chat(userId.longValue(), request);
             return ResponseEntity.ok(ApiResponse.success(response, response.getTraceId()));
         } catch (AgentChatConflictException ex) {
             HttpStatus status = conflictStatus(ex.getCode());
-            return ResponseEntity.status(status)
-                    .body(ApiResponse.<AgentChatV2Response>error(
-                            errorCode(ex.getCode()),
-                            ex.getCode() + ": " + ex.getMessage(),
-                            null
-                    ));
+            return ResponseEntity.status(status).body(ApiResponse.<AgentChatV2Response>error(
+                    errorCode(ex.getCode()), ex.getCode() + ": " + ex.getMessage(), null));
         } catch (AgentGatewayException ex) {
             return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
                     .body(ApiResponse.<AgentChatV2Response>error(50201, ex.getCode() + ": " + ex.getMessage(), null));
@@ -64,9 +58,7 @@ public class AgentChatV2Controller {
             @RequestHeader(value = "X-Internal-Api-Key", required = false) String suppliedKey,
             @RequestBody Map<String, Object> request
     ) {
-        if (!validInternalKey(suppliedKey)) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
-        }
+        if (!validInternalKey(suppliedKey)) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         Map<String, Object> body = service.loadReportSections(reportId, request);
         String resultStatus = String.valueOf(body.get("status"));
         if ("NOT_FOUND".equals(resultStatus)) return ResponseEntity.status(HttpStatus.NOT_FOUND).body(body);
@@ -79,15 +71,13 @@ public class AgentChatV2Controller {
         if (internalApiKey == null || internalApiKey.trim().isEmpty() || suppliedKey == null) return false;
         return MessageDigest.isEqual(
                 internalApiKey.trim().getBytes(StandardCharsets.UTF_8),
-                suppliedKey.getBytes(StandardCharsets.UTF_8)
-        );
+                suppliedKey.getBytes(StandardCharsets.UTF_8));
     }
 
     private HttpStatus conflictStatus(String code) {
         if ("IDEMPOTENCY_CONFLICT".equals(code) || "AGENT_REQUEST_IN_PROGRESS".equals(code)) return HttpStatus.CONFLICT;
         if ("REPORT_NOT_FOUND_OR_FORBIDDEN".equals(code)) return HttpStatus.NOT_FOUND;
-        if ("AGENT_TURN_MISMATCH".equals(code)
-                || "INVALID_AGENT_RESPONSE".equals(code)
+        if ("AGENT_TURN_MISMATCH".equals(code) || "INVALID_AGENT_RESPONSE".equals(code)
                 || "IDEMPOTENCY_RESPONSE_CORRUPTED".equals(code)) return HttpStatus.BAD_GATEWAY;
         return HttpStatus.BAD_REQUEST;
     }
