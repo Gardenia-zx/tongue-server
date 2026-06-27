@@ -35,14 +35,14 @@ public class AgentChatV2Service {
 
         String conversationId = normalizeConversationId(request);
         String bindingMode = normalizeBindingMode(request.getContextBinding());
-        Long boundReportId = "ACTIVE_REPORT".equals(bindingMode)
+        Long requestedReportId = "ACTIVE_REPORT".equals(bindingMode)
                 ? request.getContextBinding().getReportId()
                 : null;
 
-        String turnId = "turn_" + UUID.randomUUID().toString();
-        String assistantMessageId = "msg_assistant_" + UUID.randomUUID().toString();
-        String traceId = "trace_" + UUID.randomUUID().toString();
-        String requestHash = requestHash(userId, request, conversationId, bindingMode, boundReportId);
+        String turnId = "turn_" + UUID.randomUUID();
+        String assistantMessageId = "msg_assistant_" + UUID.randomUUID();
+        String traceId = "trace_" + UUID.randomUUID();
+        String requestHash = requestHash(userId, request, conversationId, bindingMode, requestedReportId);
 
         BeginTurnResult begin = turnStore.begin(
                 userId,
@@ -53,18 +53,18 @@ public class AgentChatV2Service {
                 traceId,
                 requestHash,
                 bindingMode,
-                boundReportId
+                requestedReportId
         );
         if (!begin.isNewTurn()) {
             return begin.getReplayResponse();
         }
 
         AgentChatTurnEntity turn = begin.getTurn();
+        Long boundReportId = turn.getBoundReportId();
         try {
-            JsonNode activeReport = boundReportId == null
+            JsonNode activeReportRef = boundReportId == null
                     ? null
-                    : turnStore.loadOwnedReport(userId, boundReportId);
-
+                    : turnStore.loadTrustedReportRef(userId, boundReportId);
             List<AgentChatMessageEntity> recentMessages = Collections.emptyList();
 
             AgentGatewayClientV2.Invocation invocation = new AgentGatewayClientV2.Invocation();
@@ -79,9 +79,13 @@ public class AgentChatV2Service {
             invocation.setAssistantMessageId(assistantMessageId);
             invocation.setContent(request.getMessage().getContent());
             invocation.setContextBinding(bindingMode);
+            invocation.setReportContextMode(bindingMode);
             invocation.setReportId(boundReportId);
-            invocation.setActiveReport(activeReport);
+            invocation.setActiveReportRef(activeReportRef);
             invocation.setRecentMessages(recentMessages);
+            invocation.setContextMode("stateful");
+            invocation.setMemoryCanRead(true);
+            invocation.setMemoryCanWrite(true);
             invocation.setClientContext(request.getClientContext() == null
                     ? Collections.<String, Object>emptyMap()
                     : request.getClientContext());
@@ -93,8 +97,6 @@ public class AgentChatV2Service {
                     conversationId,
                     assistantMessageId,
                     traceId,
-                    bindingMode,
-                    boundReportId,
                     agentResponse
             );
 
@@ -102,7 +104,7 @@ public class AgentChatV2Service {
                     ? null
                     : response.getAssistantMessage().getReportRef().getReportId();
             if (responseReportId != null) {
-                turnStore.loadOwnedReport(userId, responseReportId);
+                turnStore.loadTrustedReportRef(userId, responseReportId);
             }
             turnStore.complete(turn, assistantMessageId, response, responseReportId);
             return response;
@@ -139,9 +141,12 @@ public class AgentChatV2Service {
 
     private String normalizeBindingMode(AgentChatV2Request.ContextBinding binding) {
         String mode = binding == null || binding.getMode() == null
-                ? "NONE"
+                ? "AUTO"
                 : binding.getMode().trim().toUpperCase(Locale.ROOT);
-        if (!"NONE".equals(mode) && !"ACTIVE_REPORT".equals(mode) && !"LAST_ANSWER".equals(mode)) {
+        if (!"AUTO".equals(mode)
+                && !"NONE".equals(mode)
+                && !"ACTIVE_REPORT".equals(mode)
+                && !"LAST_ANSWER".equals(mode)) {
             throw new AgentChatConflictException("INVALID_CONTEXT_BINDING", "不支持的 context_binding.mode");
         }
         if ("ACTIVE_REPORT".equals(mode) && (binding == null || binding.getReportId() == null)) {
@@ -166,8 +171,6 @@ public class AgentChatV2Service {
             String conversationId,
             String assistantMessageId,
             String traceId,
-            String bindingMode,
-            Long boundReportId,
             JsonNode source
     ) {
         JsonNode sourceMessage = source.path("message");
@@ -192,16 +195,16 @@ public class AgentChatV2Service {
         if (sourceMessage.has("structured_content") && !sourceMessage.get("structured_content").isNull()) {
             message.setStructuredContent(sourceMessage.get("structured_content"));
         }
-        Long responseReportId = boundReportId;
-        if (source.hasNonNull("report_id")) {
-            responseReportId = Long.valueOf(source.get("report_id").asLong());
-        }
-        if (responseReportId != null && ("ACTIVE_REPORT".equals(bindingMode) || source.hasNonNull("report_id"))) {
+
+        JsonNode reportContext = source.path("state_snapshot").path("report_context");
+        boolean loaded = "LOADED".equalsIgnoreCase(reportContext.path("status").asText(""));
+        if (loaded && source.hasNonNull("report_id")) {
             message.setReportRef(new AgentChatV2Response.ReportRef(
-                    responseReportId,
-                    source.hasNonNull("report_id") && boundReportId == null ? "GENERATED" : "REFERENCED"
+                    source.get("report_id").asLong(),
+                    "REFERENCED"
             ));
         }
+
         message.setCreatedAt(LocalDateTime.now());
         response.setAssistantMessage(message);
 
