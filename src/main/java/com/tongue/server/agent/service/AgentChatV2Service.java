@@ -288,7 +288,11 @@ public class AgentChatV2Service {
         if (sourceMessage.has("structured_content") && !sourceMessage.get("structured_content").isNull()) {
             message.setStructuredContent(sourceMessage.get("structured_content"));
         }
-        JsonNode reportContext = source.path("state_snapshot").path("report_context");
+        JsonNode snapshot = source.path("state_snapshot");
+        JsonNode reportContext = snapshot.path("report_context");
+        if (reportContext.isMissingNode() || reportContext.isEmpty()) {
+            reportContext = snapshot.path("intent_result").path("report_context");
+        }
         if ("LOADED".equalsIgnoreCase(reportContext.path("status").asText("")) && source.hasNonNull("report_id")) {
             message.setReportRef(new AgentChatV2Response.ReportRef(source.get("report_id").asLong(), "REFERENCED"));
         }
@@ -296,7 +300,7 @@ public class AgentChatV2Service {
         response.setAssistantMessage(message);
 
         AgentChatV2Response.Execution execution = new AgentChatV2Response.Execution();
-        JsonNode agentLoop = source.path("state_snapshot").path("agent_loop");
+        JsonNode agentLoop = snapshot.path("agent_loop");
         execution.setStatus(agentLoop.path("status").asText(response.getStatus()));
         execution.setFinishReason(agentLoop.path("finish_reason").asText("final_answer"));
         response.setExecution(execution);
