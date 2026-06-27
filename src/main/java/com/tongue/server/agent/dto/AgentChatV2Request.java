@@ -69,7 +69,7 @@ public class AgentChatV2Request {
     }
 
     public static class ContextBinding {
-        private String mode = "NONE";
+        private String mode = "AUTO";
 
         @JsonProperty("report_id")
         private Long reportId;

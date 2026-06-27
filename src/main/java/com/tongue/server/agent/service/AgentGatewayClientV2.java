@@ -26,11 +26,7 @@ public class AgentGatewayClientV2 {
     private final ObjectMapper objectMapper;
     private final RestTemplate restTemplate;
 
-    public AgentGatewayClientV2(
-            AgentProperties properties,
-            ObjectMapper objectMapper,
-            RestTemplateBuilder restTemplateBuilder
-    ) {
+    public AgentGatewayClientV2(AgentProperties properties, ObjectMapper objectMapper, RestTemplateBuilder restTemplateBuilder) {
         this.properties = properties;
         this.objectMapper = objectMapper;
         this.restTemplate = restTemplateBuilder
@@ -41,7 +37,6 @@ public class AgentGatewayClientV2 {
 
     public JsonNode run(Invocation invocation) {
         ObjectNode payload = buildPayload(invocation);
-
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         try {
@@ -51,7 +46,7 @@ public class AgentGatewayClientV2 {
                     JsonNode.class
             );
             if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
-                throw new AgentGatewayException("AGENT_EMPTY_RESPONSE", "Agent 返回空响应或非 2xx 状态");
+                throw new AgentGatewayException("AGENT_EMPTY_RESPONSE", "Agent returned an empty or non-2xx response");
             }
             return response.getBody();
         } catch (RestClientException ex) {
@@ -72,9 +67,7 @@ public class AgentGatewayClientV2 {
         payload.put("user_message_id", invocation.getUserMessageId());
         payload.put("assistant_message_id", invocation.getAssistantMessageId());
         payload.put("conversation_id", invocation.getConversationId());
-        if (invocation.getReportId() != null) {
-            payload.put("report_id", invocation.getReportId());
-        }
+        if (invocation.getReportId() != null) payload.put("report_id", invocation.getReportId());
 
         ObjectNode message = payload.putObject("message");
         message.put("message_id", invocation.getUserMessageId());
@@ -86,25 +79,26 @@ public class AgentGatewayClientV2 {
         ObjectNode clientContext = payload.putObject("client_context");
         clientContext.put("page", "analysis");
         clientContext.put("locale", "zh-CN");
-        if (invocation.getReportId() != null) {
-            clientContext.put("active_report_id", invocation.getReportId());
-        }
+        clientContext.put("report_context_mode", invocation.getReportContextMode());
+        if (invocation.getReportId() != null) clientContext.put("active_report_id", invocation.getReportId());
         clientContext.set("extra", objectMapper.valueToTree(invocation.getClientContext()));
 
         String contextMode = invocation.getContextMode();
-        if ("mysql_recovery".equals(contextMode)) {
+        boolean mysqlRecovery = "mysql_recovery".equals(contextMode);
+        if (mysqlRecovery || invocation.getActiveReportRef() != null) {
             ObjectNode contextBundle = payload.putObject("context_bundle");
-            contextBundle.put("mode", "mysql_recovery");
-            contextBundle.put("conversation_id", invocation.getConversationId());
-            contextBundle.set("recent_messages", toRecentMessages(invocation.getRecentMessages()));
-            if (invocation.getActiveReport() != null) {
-                contextBundle.set("active_report", invocation.getActiveReport());
+            if (mysqlRecovery) {
+                contextBundle.put("mode", "mysql_recovery");
+                contextBundle.put("conversation_id", invocation.getConversationId());
+                contextBundle.set("recent_messages", toRecentMessages(invocation.getRecentMessages()));
+            }
+            if (invocation.getActiveReportRef() != null) {
+                contextBundle.set("active_report_ref", invocation.getActiveReportRef());
             }
         }
 
         ObjectNode options = payload.putObject("options");
-        ObjectNode contextOptions = options.putObject("context");
-        contextOptions.put("mode", contextMode);
+        options.putObject("context").put("mode", contextMode);
         ObjectNode memoryOptions = options.putObject("memory");
         memoryOptions.put("can_read", invocation.isMemoryCanRead());
         memoryOptions.put("can_write", invocation.isMemoryCanWrite());
@@ -113,15 +107,14 @@ public class AgentGatewayClientV2 {
 
     private ArrayNode toRecentMessages(List<AgentChatMessageEntity> messages) {
         ArrayNode result = objectMapper.createArrayNode();
-        if (messages == null) {
-            return result;
-        }
+        if (messages == null) return result;
         for (AgentChatMessageEntity item : messages) {
             ObjectNode message = result.addObject();
             message.put("message_id", item.getMessageId());
             message.put("role", item.getRole().toLowerCase());
             message.put("content_type", item.getContentType());
             message.put("content", item.getContent());
+            if (item.getReportId() != null) message.put("report_id", item.getReportId());
         }
         return result;
     }
@@ -138,8 +131,9 @@ public class AgentGatewayClientV2 {
         private String assistantMessageId;
         private String content;
         private String contextBinding;
+        private String reportContextMode = "AUTO";
         private Long reportId;
-        private JsonNode activeReport;
+        private JsonNode activeReportRef;
         private List<AgentChatMessageEntity> recentMessages;
         private Map<String, Object> clientContext;
         private String contextMode = "stateful";
@@ -168,18 +162,20 @@ public class AgentGatewayClientV2 {
         public void setContent(String content) { this.content = content; }
         public String getContextBinding() { return contextBinding; }
         public void setContextBinding(String contextBinding) { this.contextBinding = contextBinding; }
+        public String getReportContextMode() {
+            return reportContextMode == null || reportContextMode.trim().isEmpty() ? "AUTO" : reportContextMode.trim().toUpperCase();
+        }
+        public void setReportContextMode(String reportContextMode) { this.reportContextMode = reportContextMode; }
         public Long getReportId() { return reportId; }
         public void setReportId(Long reportId) { this.reportId = reportId; }
-        public JsonNode getActiveReport() { return activeReport; }
-        public void setActiveReport(JsonNode activeReport) { this.activeReport = activeReport; }
+        public JsonNode getActiveReportRef() { return activeReportRef; }
+        public void setActiveReportRef(JsonNode activeReportRef) { this.activeReportRef = activeReportRef; }
         public List<AgentChatMessageEntity> getRecentMessages() { return recentMessages; }
         public void setRecentMessages(List<AgentChatMessageEntity> recentMessages) { this.recentMessages = recentMessages; }
         public Map<String, Object> getClientContext() { return clientContext; }
         public void setClientContext(Map<String, Object> clientContext) { this.clientContext = clientContext; }
         public String getContextMode() {
-            return contextMode == null || contextMode.trim().isEmpty()
-                    ? "stateful"
-                    : contextMode.trim().toLowerCase();
+            return contextMode == null || contextMode.trim().isEmpty() ? "stateful" : contextMode.trim().toLowerCase();
         }
         public void setContextMode(String contextMode) { this.contextMode = contextMode; }
         public boolean isMemoryCanRead() { return memoryCanRead; }
@@ -190,17 +186,8 @@ public class AgentGatewayClientV2 {
 
     public static class AgentGatewayException extends RuntimeException {
         private final String code;
-
-        public AgentGatewayException(String code, String message) {
-            super(message);
-            this.code = code;
-        }
-
-        public AgentGatewayException(String code, String message, Throwable cause) {
-            super(message, cause);
-            this.code = code;
-        }
-
+        public AgentGatewayException(String code, String message) { super(message); this.code = code; }
+        public AgentGatewayException(String code, String message, Throwable cause) { super(message, cause); this.code = code; }
         public String getCode() { return code; }
     }
 }

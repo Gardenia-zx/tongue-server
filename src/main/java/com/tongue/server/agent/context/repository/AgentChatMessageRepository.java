@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 @Repository("agentChatV2MessageRepository")
 public interface AgentChatMessageRepository extends JpaRepository<AgentChatMessageEntity, Long> {
@@ -14,6 +15,14 @@ public interface AgentChatMessageRepository extends JpaRepository<AgentChatMessa
             String conversationId,
             Pageable pageable
     );
+
+    Optional<AgentChatMessageEntity> findFirstByUserIdAndConversationIdAndRoleAndReportIdIsNotNullOrderBySequenceNoDesc(
+            Long userId,
+            String conversationId,
+            String role
+    );
+
+    Optional<AgentChatMessageEntity> findFirstByUserIdAndReportIdOrderBySequenceNoDesc(Long userId, Long reportId);
 
     long countByUserIdAndConversationId(Long userId, String conversationId);
 

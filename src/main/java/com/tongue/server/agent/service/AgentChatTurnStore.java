@@ -59,7 +59,7 @@ public class AgentChatTurnStore {
             String traceId,
             String requestHash,
             String bindingMode,
-            Long boundReportId
+            Long requestedReportId
     ) {
         Optional<AgentChatTurnEntity> existing = turnRepository.findByUserIdAndRequestId(userId, request.getRequestId());
         if (existing.isPresent()) {
@@ -70,6 +70,17 @@ public class AgentChatTurnStore {
                 .findByUserIdAndConversationId(userId, conversationId)
                 .orElseGet(() -> newConversation(userId, conversationId, request.getThreadId()));
         conversation.setThreadId(request.getThreadId());
+
+        Long resolvedReportId = resolveBoundReportId(
+                userId,
+                conversation,
+                request.getThreadId(),
+                bindingMode,
+                requestedReportId
+        );
+        if (resolvedReportId != null) {
+            conversation.setActiveReportId(resolvedReportId);
+        }
         conversation.setUpdatedAt(LocalDateTime.now());
         conversationRepository.save(conversation);
 
@@ -83,7 +94,7 @@ public class AgentChatTurnStore {
         turn.setStatus("PROCESSING");
         turn.setInputContent(request.getMessage().getContent());
         turn.setContextBinding(bindingMode);
-        turn.setBoundReportId(boundReportId);
+        turn.setBoundReportId(resolvedReportId);
         turn.setTraceId(traceId);
         turn.setStartedAt(now);
         turn.setCreatedAt(now);
@@ -120,6 +131,95 @@ public class AgentChatTurnStore {
         result.setConversation(conversation);
         result.setAssistantMessageId(assistantMessageId);
         return result;
+    }
+
+    private Long resolveBoundReportId(
+            long userId,
+            AgentChatConversationEntity conversation,
+            String threadId,
+            String bindingMode,
+            Long requestedReportId
+    ) {
+        if ("NONE".equals(bindingMode)) {
+            return null;
+        }
+
+        if ("ACTIVE_REPORT".equals(bindingMode)) {
+            if (requestedReportId == null) {
+                throw new AgentChatConflictException("REPORT_ID_REQUIRED", "ACTIVE_REPORT 模式必须提供 report_id");
+            }
+            loadTrustedReportRef(userId, requestedReportId);
+            return requestedReportId;
+        }
+
+        if ("LAST_ANSWER".equals(bindingMode)) {
+            Optional<AgentChatMessageEntity> recent = messageRepository
+                    .findFirstByUserIdAndConversationIdAndRoleAndReportIdIsNotNullOrderBySequenceNoDesc(
+                            userId,
+                            conversation.getConversationId(),
+                            "ASSISTANT"
+                    );
+            if (recent.isPresent()) {
+                return recent.get().getReportId();
+            }
+        }
+
+        if (conversation.getActiveReportId() != null) {
+            return validateOptionalReport(userId, conversation.getActiveReportId());
+        }
+
+        Long legacyActiveReportId = findLegacyActiveReportId(userId, threadId);
+        if (legacyActiveReportId != null) {
+            return validateOptionalReport(userId, legacyActiveReportId);
+        }
+
+        Long latestThreadReportId = findLatestThreadReportId(userId, threadId);
+        if (latestThreadReportId != null) {
+            return validateOptionalReport(userId, latestThreadReportId);
+        }
+        return null;
+    }
+
+    private Long validateOptionalReport(long userId, Long reportId) {
+        if (reportId == null) {
+            return null;
+        }
+        try {
+            loadTrustedReportRef(userId, reportId);
+            return reportId;
+        } catch (AgentChatConflictException ignored) {
+            return null;
+        }
+    }
+
+    private Long findLegacyActiveReportId(long userId, String threadId) {
+        if (threadId == null || threadId.trim().isEmpty()) {
+            return null;
+        }
+        List<Long> rows = jdbcTemplate.queryForList(
+                "SELECT active_report_id FROM agent_conversation " +
+                        "WHERE user_id = ? AND thread_id = ? AND status = 'ACTIVE' " +
+                        "AND active_report_id IS NOT NULL ORDER BY updated_at DESC LIMIT 1",
+                Long.class,
+                userId,
+                threadId
+        );
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    private Long findLatestThreadReportId(long userId, String threadId) {
+        if (threadId == null || threadId.trim().isEmpty()) {
+            return null;
+        }
+        List<Long> rows = jdbcTemplate.queryForList(
+                "SELECT id FROM tongue_report " +
+                        "WHERE user_id = ? AND thread_id = ? AND deleted_at IS NULL " +
+                        "ORDER BY updated_at DESC, id DESC LIMIT 1",
+                Long.class,
+                userId,
+                threadId
+        );
+        return rows.isEmpty() ? null : rows.get(0);
     }
 
     private BeginTurnResult replayOrReject(AgentChatTurnEntity turn, String requestHash) {
@@ -168,11 +268,16 @@ public class AgentChatTurnStore {
 
     @Transactional(readOnly = true)
     public JsonNode loadOwnedReport(long userId, Long reportId) {
+        return loadTrustedReportRef(userId, reportId);
+    }
+
+    @Transactional(readOnly = true)
+    public JsonNode loadTrustedReportRef(long userId, Long reportId) {
         if (reportId == null) {
             return null;
         }
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
-                "SELECT id, summary, feature_summary, report_status " +
+                "SELECT id, user_id, task_id, thread_id, report_status, summary, feature_summary, created_at, updated_at " +
                         "FROM tongue_report WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
                 reportId,
                 userId
@@ -180,19 +285,56 @@ public class AgentChatTurnStore {
         if (rows.isEmpty()) {
             throw new AgentChatConflictException("REPORT_NOT_FOUND_OR_FORBIDDEN", "报告不存在或不属于当前用户");
         }
+
         Map<String, Object> row = rows.get(0);
-        ObjectNode report = objectMapper.createObjectNode();
-        report.put("report_id", ((Number) row.get("id")).longValue());
-        putNullable(report, "summary", row.get("summary"));
-        putNullable(report, "feature_summary", row.get("feature_summary"));
-        putNullable(report, "report_status", row.get("report_status"));
-        return report;
+        ObjectNode ref = objectMapper.createObjectNode();
+        ref.put("report_id", ((Number) row.get("id")).longValue());
+        ref.put("owner_user_id", userId);
+        ref.put("tenant_id", String.valueOf(userId));
+        ref.put("trusted", true);
+        ref.put("is_current_active_report", true);
+        ref.put("report_version", loadCurrentReportVersion(reportId));
+        putNullable(ref, "task_id", row.get("task_id"));
+        putNullable(ref, "thread_id", row.get("thread_id"));
+        putNullable(ref, "report_status", row.get("report_status"));
+        putNullable(ref, "summary", row.get("summary"));
+        putNullable(ref, "feature_summary", row.get("feature_summary"));
+        putNullable(ref, "created_at", row.get("created_at"));
+        putNullable(ref, "updated_at", row.get("updated_at"));
+
+        messageRepository.findFirstByUserIdAndReportIdOrderBySequenceNoDesc(userId, reportId)
+                .map(AgentChatMessageEntity::getTurnId)
+                .ifPresent(value -> ref.put("source_turn_id", value));
+        return ref;
+    }
+
+    private int loadCurrentReportVersion(Long reportId) {
+        Integer value = jdbcTemplate.queryForObject(
+                "SELECT COALESCE(MAX(version_no), 1) FROM tongue_report_version WHERE report_id = ?",
+                Integer.class,
+                reportId
+        );
+        return value == null ? 1 : value.intValue();
     }
 
     private void putNullable(ObjectNode target, String key, Object value) {
-        if (value != null) {
+        if (value instanceof Number) {
+            target.put(key, ((Number) value).longValue());
+        } else if (value != null) {
             target.put(key, String.valueOf(value));
         }
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void bindActiveReport(long userId, String conversationId, String threadId, long reportId) {
+        loadTrustedReportRef(userId, reportId);
+        AgentChatConversationEntity conversation = conversationRepository
+                .findByUserIdAndConversationId(userId, conversationId)
+                .orElseGet(() -> newConversation(userId, conversationId, threadId));
+        conversation.setThreadId(threadId);
+        conversation.setActiveReportId(reportId);
+        conversation.setUpdatedAt(LocalDateTime.now());
+        conversationRepository.save(conversation);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
