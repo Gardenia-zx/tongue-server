@@ -1,4 +1,4 @@
-package com.tongue.server.agentchat.v2;
+package com.tongue.server.agent.context.entity;
 
 import javax.persistence.Column;
 import javax.persistence.Entity;
@@ -22,7 +22,7 @@ import java.time.LocalDateTime;
                 @Index(name = "idx_agent_chat_conversation_active_report", columnList = "active_report_id")
         }
 )
-public class AgentConversationEntity {
+public class AgentChatConversationEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

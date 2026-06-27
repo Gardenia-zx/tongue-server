@@ -2,12 +2,15 @@ package com.tongue.server.tongue.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.tongue.server.agent.context.entity.AgentConversationEntity;
+import com.tongue.server.agent.context.service.ConversationContextService;
 import com.tongue.server.auth.AuthContext;
 import com.tongue.server.client.TongueAgentClient;
 import com.tongue.server.common.BusinessException;
 import com.tongue.server.common.ErrorCode;
 import com.tongue.server.dto.AgentRunRequest;
 import com.tongue.server.dto.AgentRunResponse;
+import com.tongue.server.dto.AgentTurnAckRequest;
 import com.tongue.server.storage.StorageResult;
 import com.tongue.server.storage.entity.FileObjectEntity;
 import com.tongue.server.storage.repository.FileObjectRepository;
@@ -61,6 +64,7 @@ public class TongueAnalysisAppService {
     private final TongueReportFeatureRepository featureRepository;
     private final TongueReportEvidenceRepository evidenceRepository;
     private final NotificationService notificationService;
+    private final ConversationContextService conversationContextService;
 
     public TongueAnalysisAppService(
             StorageService storageService,
@@ -73,7 +77,8 @@ public class TongueAnalysisAppService {
             TongueReportVersionRepository versionRepository,
             TongueReportFeatureRepository featureRepository,
             TongueReportEvidenceRepository evidenceRepository,
-            NotificationService notificationService
+            NotificationService notificationService,
+            ConversationContextService conversationContextService
     ) {
         this.storageService = storageService;
         this.tongueAgentClient = tongueAgentClient;
@@ -86,6 +91,7 @@ public class TongueAnalysisAppService {
         this.featureRepository = featureRepository;
         this.evidenceRepository = evidenceRepository;
         this.notificationService = notificationService;
+        this.conversationContextService = conversationContextService;
     }
 
     @Transactional
@@ -98,14 +104,17 @@ public class TongueAnalysisAppService {
     ) {
         Long userId = AuthContext.requireUserId();
         String normalizedUserDescription = normalizeUserDescription(userDescription);
+        AgentConversationEntity conversation = conversationContextService.ensureConversation(
+                userId,
+                conversationId,
+                requestThreadId
+        );
 
         TongueReportEntity report = new TongueReportEntity();
         report.userId = userId;
         report.reportStatus = "DRAFT";
         report.sourceType = "AI";
-        report.threadId = StringUtils.hasText(requestThreadId)
-                ? requestThreadId.trim()
-                : "tongue_analysis_" + userId + "_" + UUID.randomUUID();
+        report.threadId = conversation.threadId;
         reportRepository.save(report);
 
         StorageResult imageResult = storageService.storeTongueImage(userId, report.id, image, traceId);
@@ -124,11 +133,29 @@ public class TongueAnalysisAppService {
         report.taskId = task.id;
         reportRepository.save(report);
 
-        submitTaskAfterCommit(task.id, conversationId, normalizedUserDescription);
+        Map<String, Object> userMetadata = new LinkedHashMap<String, Object>();
+        userMetadata.put("source", "tongue_analyze");
+        userMetadata.put("task_id", task.id);
+        userMetadata.put("trace_id", traceId);
+        String userMessageId = "analysis_user_" + task.id;
+        conversationContextService.appendUserMessage(
+                conversation,
+                buildAnalyzeUserMessage(normalizedUserDescription),
+                "mixed",
+                report.imageFileId,
+                report.id,
+                userMetadata,
+                userMessageId
+        );
+        conversationContextService.markImageSubmitted(conversation, report.imageFileId);
+
+        submitTaskAfterCommit(task.id, String.valueOf(conversation.id), normalizedUserDescription);
 
         TongueAnalyzeCreateResponse response = new TongueAnalyzeCreateResponse();
         response.reportId = report.id;
         response.taskId = task.id;
+        response.conversationId = String.valueOf(conversation.id);
+        response.threadId = conversation.threadId;
         response.status = task.status;
         return response;
     }
@@ -179,6 +206,18 @@ public class TongueAnalysisAppService {
 
             updateTask(task, "RUNNING", "REPORT_GENERATING", 0.85, null, null);
             saveAgentReport(task, report, agentResponse);
+            conversationContextService.markReportReady(
+                    resolveConversationId(conversationId, report),
+                    task.userId,
+                    report,
+                    report.summary,
+                    agentRequest.getAssistantMessageId(),
+                    String.valueOf(task.userId),
+                    agentRequest.getTurnId(),
+                    agentRequest.getUserMessageId(),
+                    agentRequest.getThreadEpoch()
+            );
+            ackAgentTurn(agentResponse, agentRequest.getAssistantMessageId());
             updateTask(task, "COMPLETED", "REPORT_READY", 1.0, null, null);
             notificationService.create(
                     task.userId,
@@ -238,7 +277,11 @@ public class TongueAnalysisAppService {
         task.startedAt = null;
         task.finishedAt = null;
         taskRepository.save(task);
-        submitTaskAfterCommit(task.id, null, null);
+        submitTaskAfterCommit(
+                task.id,
+                conversationContextService.resolveConversationIdForReport(userId, task.reportId),
+                null
+        );
         return toTaskStatus(task);
     }
 
@@ -341,6 +384,7 @@ public class TongueAnalysisAppService {
         TongueReportEntity report = loadReportForUser(reportId, userId);
         report.deletedAt = LocalDateTime.now();
         reportRepository.save(report);
+        conversationContextService.clearActiveReport(userId, reportId);
     }
 
     private String normalizeUserDescription(String userDescription) {
@@ -354,6 +398,21 @@ public class TongueAnalysisAppService {
         return normalized;
     }
 
+    private String buildAnalyzeUserMessage(String normalizedUserDescription) {
+        if (StringUtils.hasText(normalizedUserDescription)) {
+            return "我想做一次舌象分析。\n用户补充描述：" + normalizedUserDescription;
+        }
+        return "我想做一次舌象分析";
+    }
+
+    private String resolveConversationId(String conversationId, TongueReportEntity report) {
+        if (StringUtils.hasText(conversationId)) {
+            return conversationId;
+        }
+        String resolved = conversationContextService.resolveConversationIdForReport(report.userId, report.id);
+        return StringUtils.hasText(resolved) ? resolved : null;
+    }
+
     private AgentRunRequest buildAgentRequest(
             TongueAnalysisTaskEntity task,
             TongueReportEntity report,
@@ -362,6 +421,17 @@ public class TongueAnalysisAppService {
             String userDescription
     ) {
         String normalizedUserDescription = normalizeUserDescription(userDescription);
+        String resolvedConversationId = resolveConversationId(conversationId, report);
+        AgentConversationEntity conversation = conversationContextService.ensureConversation(
+                task.userId,
+                resolvedConversationId,
+                report.threadId
+        );
+        Map<String, Object> contextBundle = conversationContextService.buildContextBundleForAnalysis(
+                conversation,
+                report.id,
+                normalizedUserDescription
+        );
 
         AgentRunRequest.AgentAttachment attachment = new AgentRunRequest.AgentAttachment();
         attachment.setFileId(imageFile.id);
@@ -369,6 +439,10 @@ public class TongueAnalysisAppService {
         attachment.setPurpose("tongue_image");
 
         AgentRunRequest.AgentMessage message = new AgentRunRequest.AgentMessage();
+        String userMessageId = "analysis_user_" + task.id;
+        String assistantMessageId = "analysis_assistant_" + task.id;
+        String turnId = String.valueOf(conversation.id) + ":" + userMessageId + ":" + assistantMessageId;
+        message.setMessageId(userMessageId);
         message.setRole("user");
         message.setContentType("mixed");
         if (StringUtils.hasText(normalizedUserDescription)) {
@@ -387,6 +461,7 @@ public class TongueAnalysisAppService {
         extra.put("tongue_image_path", imageFile.storagePath);
         extra.put("file_id", imageFile.id);
         extra.put("source", "tongue-server-storage");
+        extra.put("context_bundle", contextBundle);
         if (StringUtils.hasText(normalizedUserDescription)) {
             extra.put("user_description", normalizedUserDescription);
             extra.put("symptom_description", normalizedUserDescription);
@@ -400,25 +475,56 @@ public class TongueAnalysisAppService {
         clientContext.setExtra(extra);
 
         Map<String, Object> memory = new LinkedHashMap<String, Object>();
-        memory.put("can_read", true);
+        memory.put("can_read", false);
         memory.put("can_write", false);
+        Map<String, Object> contextOptions = new LinkedHashMap<String, Object>();
+        contextOptions.put("mode", "stateless");
         Map<String, Object> options = new LinkedHashMap<String, Object>();
         options.put("memory", memory);
+        options.put("context", contextOptions);
 
         AgentRunRequest request = new AgentRunRequest();
         request.setSchemaVersion("1.0");
         request.setRequestId(UUID.randomUUID().toString());
         request.setTraceId(task.traceId);
+        request.setTenantId(String.valueOf(task.userId));
         request.setUserId(task.userId);
-        request.setThreadId(report.threadId);
-        request.setConversationId(conversationId);
+        request.setThreadId(conversation.threadId);
+        request.setThreadEpoch(conversation.threadEpoch == null ? 1 : conversation.threadEpoch);
+        request.setTurnId(turnId);
+        request.setUserMessageId(userMessageId);
+        request.setAssistantMessageId(assistantMessageId);
+        request.setConversationId(String.valueOf(conversation.id));
         request.setReportId(report.id);
         request.setTaskId(task.id);
         request.setTaskVersion(1);
         request.setMessage(message);
         request.setClientContext(clientContext);
+        request.setContextBundle(contextBundle);
         request.setOptions(options);
         return request;
+    }
+
+    private void ackAgentTurn(
+            AgentRunResponse agentResponse,
+            String assistantMessageId
+    ) {
+        if (!StringUtils.hasText(agentResponse.getTenantId())
+                || !StringUtils.hasText(agentResponse.getTurnId())
+                || !StringUtils.hasText(agentResponse.getResponseHash())
+                || !StringUtils.hasText(assistantMessageId)) {
+            return;
+        }
+        AgentTurnAckRequest ackRequest = new AgentTurnAckRequest();
+        ackRequest.setTenantId(agentResponse.getTenantId());
+        ackRequest.setTurnId(agentResponse.getTurnId());
+        ackRequest.setAssistantMessageId(assistantMessageId);
+        ackRequest.setResponseHash(agentResponse.getResponseHash());
+        try {
+            tongueAgentClient.ackTurn(ackRequest);
+        } catch (RuntimeException ignored) {
+            // Python retains the encrypted snapshot until ACK/reconciliation succeeds.
+        }
     }
 
     private void saveAgentReport(
@@ -447,7 +553,10 @@ public class TongueAnalysisAppService {
         Object standardFeatures = draftReport.get("standard_features");
         Object ragEvidence = draftReport.get("rag_evidence");
 
-        report.summary = toStringValue(message.get("content"));
+        String draftSummary = toStringValue(draftReport.get("summary"));
+        report.summary = StringUtils.hasText(draftSummary)
+                ? draftSummary
+                : toStringValue(message.get("content"));
         report.featureSummary = toStringValue(draftReport.get("feature_summary"));
         report.detectedFeatureCodes = writeJson(detectedCodes);
         report.standardFeaturesJson = writeJson(standardFeatures);

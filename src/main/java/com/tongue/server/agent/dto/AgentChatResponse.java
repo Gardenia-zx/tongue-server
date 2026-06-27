@@ -16,6 +16,9 @@ public class AgentChatResponse {
 
     public String content;
 
+    @JsonProperty("structured_content")
+    public Map<String, Object> structuredContent;
+
     @JsonProperty("intent_result")
     public Map<String, Object> intentResult;
 

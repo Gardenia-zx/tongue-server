@@ -1,4 +1,4 @@
-package com.tongue.server.agentchat.v2;
+package com.tongue.server.agent.context.entity;
 
 import org.junit.jupiter.api.Test;
 
@@ -11,17 +11,17 @@ class AgentChatV2EntityMappingTest {
 
     @Test
     void conversationUsesDedicatedChatTable() {
-        assertTableName(AgentConversationEntity.class, "agent_chat_conversation");
+        assertTableName(AgentChatConversationEntity.class, "agent_chat_conversation");
     }
 
     @Test
     void turnUsesDedicatedChatTable() {
-        assertTableName(AgentTurnEntity.class, "agent_chat_turn");
+        assertTableName(AgentChatTurnEntity.class, "agent_chat_turn");
     }
 
     @Test
     void messageUsesDedicatedChatTable() {
-        assertTableName(AgentMessageEntity.class, "agent_chat_message");
+        assertTableName(AgentChatMessageEntity.class, "agent_chat_message");
     }
 
     private void assertTableName(Class<?> entityType, String expectedTableName) {

@@ -13,10 +13,24 @@ public class AgentRunRequest {
     private String requestId;
     @JsonProperty("trace_id")
     private String traceId;
+    @JsonProperty("tenant_id")
+    private String tenantId;
     @JsonProperty("user_id")
     private Long userId;
     @JsonProperty("thread_id")
     private String threadId;
+    @JsonProperty("thread_epoch")
+    private Integer threadEpoch = 1;
+    @JsonProperty("turn_id")
+    private String turnId;
+    @JsonProperty("user_message_id")
+    private String userMessageId;
+    @JsonProperty("assistant_message_id")
+    private String assistantMessageId;
+    @JsonProperty("request_hash")
+    private String requestHash;
+    @JsonProperty("reset_reason")
+    private String resetReason;
     @JsonProperty("conversation_id")
     private String conversationId;
     @JsonProperty("report_id")
@@ -28,6 +42,8 @@ public class AgentRunRequest {
     private AgentMessage message;
     @JsonProperty("client_context")
     private AgentClientContext clientContext;
+    @JsonProperty("context_bundle")
+    private Map<String, Object> contextBundle;
     private Map<String, Object> options;
 
     public String getSchemaVersion() {
@@ -54,6 +70,14 @@ public class AgentRunRequest {
         this.traceId = traceId;
     }
 
+    public String getTenantId() {
+        return tenantId;
+    }
+
+    public void setTenantId(String tenantId) {
+        this.tenantId = tenantId;
+    }
+
     public Long getUserId() {
         return userId;
     }
@@ -68,6 +92,54 @@ public class AgentRunRequest {
 
     public void setThreadId(String threadId) {
         this.threadId = threadId;
+    }
+
+    public Integer getThreadEpoch() {
+        return threadEpoch;
+    }
+
+    public void setThreadEpoch(Integer threadEpoch) {
+        this.threadEpoch = threadEpoch;
+    }
+
+    public String getTurnId() {
+        return turnId;
+    }
+
+    public void setTurnId(String turnId) {
+        this.turnId = turnId;
+    }
+
+    public String getUserMessageId() {
+        return userMessageId;
+    }
+
+    public void setUserMessageId(String userMessageId) {
+        this.userMessageId = userMessageId;
+    }
+
+    public String getAssistantMessageId() {
+        return assistantMessageId;
+    }
+
+    public void setAssistantMessageId(String assistantMessageId) {
+        this.assistantMessageId = assistantMessageId;
+    }
+
+    public String getRequestHash() {
+        return requestHash;
+    }
+
+    public void setRequestHash(String requestHash) {
+        this.requestHash = requestHash;
+    }
+
+    public String getResetReason() {
+        return resetReason;
+    }
+
+    public void setResetReason(String resetReason) {
+        this.resetReason = resetReason;
     }
 
     public String getConversationId() {
@@ -118,6 +190,14 @@ public class AgentRunRequest {
         this.clientContext = clientContext;
     }
 
+    public Map<String, Object> getContextBundle() {
+        return contextBundle;
+    }
+
+    public void setContextBundle(Map<String, Object> contextBundle) {
+        this.contextBundle = contextBundle;
+    }
+
     public Map<String, Object> getOptions() {
         return options;
     }
@@ -127,11 +207,21 @@ public class AgentRunRequest {
     }
 
     public static class AgentMessage {
+        @JsonProperty("message_id")
+        private String messageId;
         private String role;
         @JsonProperty("content_type")
         private String contentType;
         private String content;
         private List<AgentAttachment> attachments;
+
+        public String getMessageId() {
+            return messageId;
+        }
+
+        public void setMessageId(String messageId) {
+            this.messageId = messageId;
+        }
 
         public String getRole() {
             return role;

@@ -1,9 +1,13 @@
-package com.tongue.server.agentchat.v2;
+package com.tongue.server.agent.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.tongue.server.agentchat.v2.AgentChatTurnStore.AgentChatConflictException;
-import com.tongue.server.agentchat.v2.AgentChatTurnStore.BeginTurnResult;
-import com.tongue.server.agentchat.v2.AgentGatewayClientV2.AgentGatewayException;
+import com.tongue.server.agent.context.entity.AgentChatMessageEntity;
+import com.tongue.server.agent.context.entity.AgentChatTurnEntity;
+import com.tongue.server.agent.dto.AgentChatV2Request;
+import com.tongue.server.agent.dto.AgentChatV2Response;
+import com.tongue.server.agent.service.AgentChatTurnStore.AgentChatConflictException;
+import com.tongue.server.agent.service.AgentChatTurnStore.BeginTurnResult;
+import com.tongue.server.agent.service.AgentGatewayClientV2.AgentGatewayException;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -55,13 +59,13 @@ public class AgentChatV2Service {
             return begin.getReplayResponse();
         }
 
-        AgentTurnEntity turn = begin.getTurn();
+        AgentChatTurnEntity turn = begin.getTurn();
         try {
             JsonNode activeReport = boundReportId == null
                     ? null
                     : turnStore.loadOwnedReport(userId, boundReportId);
 
-            List<AgentMessageEntity> recentMessages;
+            List<AgentChatMessageEntity> recentMessages;
             if (shouldLoadHistory(bindingMode)) {
                 recentMessages = turnStore.recentMessages(userId, conversationId);
                 recentMessages.removeIf(item -> turnId.equals(item.getTurnId()));
@@ -198,9 +202,10 @@ public class AgentChatV2Service {
         if (sourceMessage.has("structured_content") && !sourceMessage.get("structured_content").isNull()) {
             message.setStructuredContent(sourceMessage.get("structured_content"));
         }
-        Long responseReportId = source.hasNonNull("report_id")
-                ? source.get("report_id").asLong()
-                : boundReportId;
+        Long responseReportId = boundReportId;
+        if (source.hasNonNull("report_id")) {
+            responseReportId = Long.valueOf(source.get("report_id").asLong());
+        }
         if (responseReportId != null && ("ACTIVE_REPORT".equals(bindingMode) || source.hasNonNull("report_id"))) {
             message.setReportRef(new AgentChatV2Response.ReportRef(
                     responseReportId,

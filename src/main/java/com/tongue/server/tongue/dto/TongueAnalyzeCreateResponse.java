@@ -7,5 +7,9 @@ public class TongueAnalyzeCreateResponse {
     public Long reportId;
     @JsonProperty("task_id")
     public Long taskId;
+    @JsonProperty("conversation_id")
+    public String conversationId;
+    @JsonProperty("thread_id")
+    public String threadId;
     public String status;
 }

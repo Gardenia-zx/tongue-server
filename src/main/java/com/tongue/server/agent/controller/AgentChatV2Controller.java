@@ -1,7 +1,10 @@
-package com.tongue.server.agentchat.v2;
+package com.tongue.server.agent.controller;
 
-import com.tongue.server.agentchat.v2.AgentChatTurnStore.AgentChatConflictException;
-import com.tongue.server.agentchat.v2.AgentGatewayClientV2.AgentGatewayException;
+import com.tongue.server.agent.dto.AgentChatV2Request;
+import com.tongue.server.agent.dto.AgentChatV2Response;
+import com.tongue.server.agent.service.AgentChatV2Service;
+import com.tongue.server.agent.service.AgentChatTurnStore.AgentChatConflictException;
+import com.tongue.server.agent.service.AgentGatewayClientV2.AgentGatewayException;
 import com.tongue.server.auth.AuthContext;
 import com.tongue.server.common.ApiResponse;
 import org.springframework.http.HttpStatus;

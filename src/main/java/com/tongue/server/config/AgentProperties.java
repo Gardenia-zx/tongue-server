@@ -7,8 +7,9 @@ public class AgentProperties {
 
     private String baseUrl = "http://127.0.0.1:8000";
     private String runPath = "/api/v1/agent/run";
-    private int connectTimeoutMillis = 5000;
-    private int readTimeoutMillis = 60000;
+    private String ackPath = "/api/v1/agent/turns/ack";
+    private int connectTimeoutMillis = 10000;
+    private int readTimeoutMillis = 240000;
 
     public String getBaseUrl() {
         return baseUrl;
@@ -24,6 +25,14 @@ public class AgentProperties {
 
     public void setRunPath(String runPath) {
         this.runPath = runPath;
+    }
+
+    public String getAckPath() {
+        return ackPath;
+    }
+
+    public void setAckPath(String ackPath) {
+        this.ackPath = ackPath;
     }
 
     public int getConnectTimeoutMillis() {

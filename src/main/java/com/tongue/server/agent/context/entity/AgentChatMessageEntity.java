@@ -1,4 +1,4 @@
-package com.tongue.server.agentchat.v2;
+package com.tongue.server.agent.context.entity;
 
 import javax.persistence.Column;
 import javax.persistence.Entity;
@@ -21,7 +21,7 @@ import java.time.LocalDateTime;
                 @Index(name = "idx_agent_chat_message_user_created", columnList = "user_id,created_at")
         }
 )
-public class AgentMessageEntity {
+public class AgentChatMessageEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

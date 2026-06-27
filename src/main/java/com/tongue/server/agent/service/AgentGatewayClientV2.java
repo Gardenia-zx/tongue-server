@@ -1,9 +1,10 @@
-package com.tongue.server.agentchat.v2;
+package com.tongue.server.agent.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.tongue.server.agent.context.entity.AgentChatMessageEntity;
 import com.tongue.server.config.AgentProperties;
 import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.http.HttpEntity;
@@ -99,9 +100,9 @@ public class AgentGatewayClientV2 {
         }
     }
 
-    private ArrayNode toRecentMessages(List<AgentMessageEntity> messages) {
+    private ArrayNode toRecentMessages(List<AgentChatMessageEntity> messages) {
         ArrayNode result = objectMapper.createArrayNode();
-        for (AgentMessageEntity item : messages) {
+        for (AgentChatMessageEntity item : messages) {
             ObjectNode message = result.addObject();
             message.put("message_id", item.getMessageId());
             message.put("role", item.getRole().toLowerCase());
@@ -125,7 +126,7 @@ public class AgentGatewayClientV2 {
         private String contextBinding;
         private Long reportId;
         private JsonNode activeReport;
-        private List<AgentMessageEntity> recentMessages;
+        private List<AgentChatMessageEntity> recentMessages;
         private Map<String, Object> clientContext;
 
         public long getUserId() { return userId; }
@@ -154,8 +155,8 @@ public class AgentGatewayClientV2 {
         public void setReportId(Long reportId) { this.reportId = reportId; }
         public JsonNode getActiveReport() { return activeReport; }
         public void setActiveReport(JsonNode activeReport) { this.activeReport = activeReport; }
-        public List<AgentMessageEntity> getRecentMessages() { return recentMessages; }
-        public void setRecentMessages(List<AgentMessageEntity> recentMessages) { this.recentMessages = recentMessages; }
+        public List<AgentChatMessageEntity> getRecentMessages() { return recentMessages; }
+        public void setRecentMessages(List<AgentChatMessageEntity> recentMessages) { this.recentMessages = recentMessages; }
         public Map<String, Object> getClientContext() { return clientContext; }
         public void setClientContext(Map<String, Object> clientContext) { this.clientContext = clientContext; }
     }

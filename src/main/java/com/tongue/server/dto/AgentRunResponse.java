@@ -12,8 +12,18 @@ public class AgentRunResponse {
     private String requestId;
     @JsonProperty("trace_id")
     private String traceId;
+    @JsonProperty("tenant_id")
+    private String tenantId;
+    @JsonProperty("turn_id")
+    private String turnId;
+    @JsonProperty("response_hash")
+    private String responseHash;
+    @JsonProperty("response_ref")
+    private Map<String, Object> responseRef;
     @JsonProperty("thread_id")
     private String threadId;
+    @JsonProperty("thread_epoch")
+    private Integer threadEpoch;
     @JsonProperty("conversation_id")
     private String conversationId;
     @JsonProperty("report_id")
@@ -53,12 +63,52 @@ public class AgentRunResponse {
         this.traceId = traceId;
     }
 
+    public String getTenantId() {
+        return tenantId;
+    }
+
+    public void setTenantId(String tenantId) {
+        this.tenantId = tenantId;
+    }
+
+    public String getTurnId() {
+        return turnId;
+    }
+
+    public void setTurnId(String turnId) {
+        this.turnId = turnId;
+    }
+
+    public String getResponseHash() {
+        return responseHash;
+    }
+
+    public void setResponseHash(String responseHash) {
+        this.responseHash = responseHash;
+    }
+
+    public Map<String, Object> getResponseRef() {
+        return responseRef;
+    }
+
+    public void setResponseRef(Map<String, Object> responseRef) {
+        this.responseRef = responseRef;
+    }
+
     public String getThreadId() {
         return threadId;
     }
 
     public void setThreadId(String threadId) {
         this.threadId = threadId;
+    }
+
+    public Integer getThreadEpoch() {
+        return threadEpoch;
+    }
+
+    public void setThreadEpoch(Integer threadEpoch) {
+        this.threadEpoch = threadEpoch;
     }
 
     public String getConversationId() {

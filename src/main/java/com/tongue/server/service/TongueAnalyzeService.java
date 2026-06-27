@@ -109,6 +109,12 @@ public class TongueAnalyzeService {
         attachment.setPurpose("tongue_image");
 
         AgentRunRequest.AgentMessage message = new AgentRunRequest.AgentMessage();
+        String userMessageId = "legacy_analysis_user_" + taskId;
+        String assistantMessageId = "legacy_analysis_assistant_" + taskId;
+        String turnId = (emptyToNull(command.getConversationId()) != null
+                ? emptyToNull(command.getConversationId())
+                : threadId) + ":" + userMessageId + ":" + assistantMessageId;
+        message.setMessageId(userMessageId);
         message.setRole("user");
         message.setContentType("mixed");
         message.setContent("我想做一次舌象分析");
@@ -140,8 +146,13 @@ public class TongueAnalyzeService {
         request.setSchemaVersion("1.0");
         request.setRequestId(UUID.randomUUID().toString());
         request.setTraceId(traceId);
+        request.setTenantId(String.valueOf(command.getUserId()));
         request.setUserId(command.getUserId());
         request.setThreadId(threadId);
+        request.setThreadEpoch(1);
+        request.setTurnId(turnId);
+        request.setUserMessageId(userMessageId);
+        request.setAssistantMessageId(assistantMessageId);
         request.setConversationId(emptyToNull(command.getConversationId()));
         request.setReportId(reportId);
         request.setTaskId(taskId);

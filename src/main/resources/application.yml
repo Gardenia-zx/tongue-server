@@ -39,10 +39,10 @@ tongue:
     max-pool-size: 12
     queue-capacity: 200
   agent:
-    base-url: http://127.0.0.1:8000
-    run-path: /api/v1/agent/run
-    connect-timeout-millis: 5000
-    read-timeout-millis: 60000
+    base-url: ${TONGUE_AGENT_BASE_URL:http://127.0.0.1:8000}
+    run-path: ${TONGUE_AGENT_RUN_PATH:/api/v1/agent/run}
+    connect-timeout-millis: ${TONGUE_AGENT_CONNECT_TIMEOUT_MILLIS:10000}
+    read-timeout-millis: ${TONGUE_AGENT_READ_TIMEOUT_MILLIS:240000}
   storage:
     mode: local
     public-base-url: ${TONGUE_PUBLIC_BASE_URL:}

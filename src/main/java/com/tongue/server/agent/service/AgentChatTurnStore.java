@@ -1,9 +1,17 @@
-package com.tongue.server.agentchat.v2;
+package com.tongue.server.agent.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.tongue.server.agent.context.entity.AgentChatConversationEntity;
+import com.tongue.server.agent.context.entity.AgentChatMessageEntity;
+import com.tongue.server.agent.context.entity.AgentChatTurnEntity;
+import com.tongue.server.agent.context.repository.AgentChatConversationRepository;
+import com.tongue.server.agent.context.repository.AgentChatMessageRepository;
+import com.tongue.server.agent.context.repository.AgentChatTurnRepository;
+import com.tongue.server.agent.dto.AgentChatV2Request;
+import com.tongue.server.agent.dto.AgentChatV2Response;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -21,16 +29,16 @@ import java.util.Optional;
 @Component
 public class AgentChatTurnStore {
 
-    private final AgentConversationRepository conversationRepository;
-    private final AgentTurnRepository turnRepository;
-    private final AgentMessageRepository messageRepository;
+    private final AgentChatConversationRepository conversationRepository;
+    private final AgentChatTurnRepository turnRepository;
+    private final AgentChatMessageRepository messageRepository;
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
 
     public AgentChatTurnStore(
-            AgentConversationRepository conversationRepository,
-            AgentTurnRepository turnRepository,
-            AgentMessageRepository messageRepository,
+            AgentChatConversationRepository conversationRepository,
+            AgentChatTurnRepository turnRepository,
+            AgentChatMessageRepository messageRepository,
             JdbcTemplate jdbcTemplate,
             ObjectMapper objectMapper
     ) {
@@ -53,12 +61,12 @@ public class AgentChatTurnStore {
             String bindingMode,
             Long boundReportId
     ) {
-        Optional<AgentTurnEntity> existing = turnRepository.findByUserIdAndRequestId(userId, request.getRequestId());
+        Optional<AgentChatTurnEntity> existing = turnRepository.findByUserIdAndRequestId(userId, request.getRequestId());
         if (existing.isPresent()) {
             return replayOrReject(existing.get(), requestHash);
         }
 
-        AgentConversationEntity conversation = conversationRepository
+        AgentChatConversationEntity conversation = conversationRepository
                 .findByUserIdAndConversationId(userId, conversationId)
                 .orElseGet(() -> newConversation(userId, conversationId, request.getThreadId()));
         conversation.setThreadId(request.getThreadId());
@@ -66,7 +74,7 @@ public class AgentChatTurnStore {
         conversationRepository.save(conversation);
 
         LocalDateTime now = LocalDateTime.now();
-        AgentTurnEntity turn = new AgentTurnEntity();
+        AgentChatTurnEntity turn = new AgentChatTurnEntity();
         turn.setTurnId(turnId);
         turn.setConversationId(conversationId);
         turn.setUserId(userId);
@@ -84,13 +92,13 @@ public class AgentChatTurnStore {
         try {
             turnRepository.saveAndFlush(turn);
         } catch (DataIntegrityViolationException race) {
-            AgentTurnEntity raced = turnRepository.findByUserIdAndRequestId(userId, request.getRequestId())
+            AgentChatTurnEntity raced = turnRepository.findByUserIdAndRequestId(userId, request.getRequestId())
                     .orElseThrow(() -> race);
             return replayOrReject(raced, requestHash);
         }
 
         if (!messageRepository.existsByMessageId(request.getClientMessageId())) {
-            AgentMessageEntity userMessage = new AgentMessageEntity();
+            AgentChatMessageEntity userMessage = new AgentChatMessageEntity();
             userMessage.setMessageId(request.getClientMessageId());
             userMessage.setTurnId(turnId);
             userMessage.setConversationId(conversationId);
@@ -114,7 +122,7 @@ public class AgentChatTurnStore {
         return result;
     }
 
-    private BeginTurnResult replayOrReject(AgentTurnEntity turn, String requestHash) {
+    private BeginTurnResult replayOrReject(AgentChatTurnEntity turn, String requestHash) {
         if (!requestHash.equals(turn.getRequestHash())) {
             throw new AgentChatConflictException("IDEMPOTENCY_CONFLICT", "相同 request_id 对应了不同请求内容");
         }
@@ -132,9 +140,9 @@ public class AgentChatTurnStore {
         throw new AgentChatConflictException("AGENT_REQUEST_IN_PROGRESS", "该 request_id 正在处理中，请稍后使用同一 request_id 重试");
     }
 
-    private AgentConversationEntity newConversation(long userId, String conversationId, String threadId) {
+    private AgentChatConversationEntity newConversation(long userId, String conversationId, String threadId) {
         LocalDateTime now = LocalDateTime.now();
-        AgentConversationEntity conversation = new AgentConversationEntity();
+        AgentChatConversationEntity conversation = new AgentChatConversationEntity();
         conversation.setConversationId(conversationId);
         conversation.setUserId(userId);
         conversation.setThreadId(threadId);
@@ -146,8 +154,8 @@ public class AgentChatTurnStore {
     }
 
     @Transactional(readOnly = true)
-    public List<AgentMessageEntity> recentMessages(long userId, String conversationId) {
-        List<AgentMessageEntity> rows = new ArrayList<AgentMessageEntity>(
+    public List<AgentChatMessageEntity> recentMessages(long userId, String conversationId) {
+        List<AgentChatMessageEntity> rows = new ArrayList<AgentChatMessageEntity>(
                 messageRepository.findByUserIdAndConversationIdOrderBySequenceNoDesc(
                         userId,
                         conversationId,
@@ -189,12 +197,12 @@ public class AgentChatTurnStore {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void complete(
-            AgentTurnEntity turn,
+            AgentChatTurnEntity turn,
             String assistantMessageId,
             AgentChatV2Response response,
             Long reportId
     ) {
-        AgentTurnEntity managed = turnRepository.findById(turn.getId())
+        AgentChatTurnEntity managed = turnRepository.findById(turn.getId())
                 .orElseThrow(() -> new IllegalStateException("Agent turn disappeared before completion"));
         if (!managed.getTurnId().equals(response.getTurnId()) || !managed.getRequestId().equals(response.getRequestId())) {
             throw new AgentChatConflictException("AGENT_TURN_MISMATCH", "Agent 响应不属于当前 Turn");
@@ -202,7 +210,7 @@ public class AgentChatTurnStore {
 
         LocalDateTime now = LocalDateTime.now();
         if (!messageRepository.existsByMessageId(assistantMessageId)) {
-            AgentMessageEntity assistant = new AgentMessageEntity();
+            AgentChatMessageEntity assistant = new AgentChatMessageEntity();
             assistant.setMessageId(assistantMessageId);
             assistant.setTurnId(managed.getTurnId());
             assistant.setConversationId(managed.getConversationId());
@@ -227,7 +235,7 @@ public class AgentChatTurnStore {
         turnRepository.save(managed);
 
         if (reportId != null) {
-            AgentConversationEntity conversation = conversationRepository
+            AgentChatConversationEntity conversation = conversationRepository
                     .findByUserIdAndConversationId(managed.getUserId(), managed.getConversationId())
                     .orElse(null);
             if (conversation != null) {
@@ -239,8 +247,8 @@ public class AgentChatTurnStore {
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void fail(AgentTurnEntity turn, String errorCode, String errorMessage) {
-        AgentTurnEntity managed = turnRepository.findById(turn.getId()).orElse(null);
+    public void fail(AgentChatTurnEntity turn, String errorCode, String errorMessage) {
+        AgentChatTurnEntity managed = turnRepository.findById(turn.getId()).orElse(null);
         if (managed == null || "COMPLETED".equals(managed.getStatus())) {
             return;
         }
@@ -265,17 +273,17 @@ public class AgentChatTurnStore {
 
     public static class BeginTurnResult {
         private boolean newTurn;
-        private AgentTurnEntity turn;
-        private AgentConversationEntity conversation;
+        private AgentChatTurnEntity turn;
+        private AgentChatConversationEntity conversation;
         private String assistantMessageId;
         private AgentChatV2Response replayResponse;
 
         public boolean isNewTurn() { return newTurn; }
         public void setNewTurn(boolean newTurn) { this.newTurn = newTurn; }
-        public AgentTurnEntity getTurn() { return turn; }
-        public void setTurn(AgentTurnEntity turn) { this.turn = turn; }
-        public AgentConversationEntity getConversation() { return conversation; }
-        public void setConversation(AgentConversationEntity conversation) { this.conversation = conversation; }
+        public AgentChatTurnEntity getTurn() { return turn; }
+        public void setTurn(AgentChatTurnEntity turn) { this.turn = turn; }
+        public AgentChatConversationEntity getConversation() { return conversation; }
+        public void setConversation(AgentChatConversationEntity conversation) { this.conversation = conversation; }
         public String getAssistantMessageId() { return assistantMessageId; }
         public void setAssistantMessageId(String assistantMessageId) { this.assistantMessageId = assistantMessageId; }
         public AgentChatV2Response getReplayResponse() { return replayResponse; }

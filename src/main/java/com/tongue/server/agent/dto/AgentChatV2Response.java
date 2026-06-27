@@ -1,4 +1,4 @@
-package com.tongue.server.agentchat.v2;
+package com.tongue.server.agent.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;

@@ -5,11 +5,14 @@ import com.tongue.server.common.ErrorCode;
 import com.tongue.server.config.AgentProperties;
 import com.tongue.server.dto.AgentRunRequest;
 import com.tongue.server.dto.AgentRunResponse;
+import com.tongue.server.dto.AgentTurnAckRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
+
+import java.net.SocketTimeoutException;
 
 @Component
 public class TongueAgentClient {
@@ -57,6 +60,14 @@ public class TongueAgentClient {
                     ex
             );
         } catch (ResourceAccessException ex) {
+            if (isTimeout(ex)) {
+                throw new BusinessException(
+                        ErrorCode.AGENT_CALL_FAILED,
+                        "调用 Python Agent 超时，可能是图像模型服务冷启动、RAG 或大模型生成耗时过长，请稍后查看任务状态或重试",
+                        request.getTraceId(),
+                        ex
+                );
+            }
             throw new BusinessException(
                     ErrorCode.AGENT_CALL_FAILED,
                     "无法连接 Python Agent，请确认 tongue-agent 服务已启动",
@@ -66,16 +77,56 @@ public class TongueAgentClient {
         }
     }
 
+    public void ackTurn(AgentTurnAckRequest request) {
+        try {
+            restTemplate.postForObject(
+                    buildAckUrl(),
+                    request,
+                    Object.class
+            );
+        } catch (Exception ex) {
+            throw new BusinessException(
+                    ErrorCode.AGENT_CALL_FAILED,
+                    "调用 Python Agent Turn ACK 失败",
+                    null,
+                    ex
+            );
+        }
+    }
+
     private String buildRunUrl() {
+        return buildUrl(agentProperties.getRunPath(), "/api/v1/agent/run");
+    }
+
+    private String buildAckUrl() {
+        return buildUrl(agentProperties.getAckPath(), "/api/v1/agent/turns/ack");
+    }
+
+    private String buildUrl(String configuredPath, String defaultPath) {
         String baseUrl = trimTrailingSlash(agentProperties.getBaseUrl());
-        String path = agentProperties.getRunPath();
+        String path = configuredPath;
         if (path == null || path.trim().isEmpty()) {
-            path = "/api/v1/agent/run";
+            path = defaultPath;
         }
         if (!path.startsWith("/")) {
             path = "/" + path;
         }
         return baseUrl + path;
+    }
+
+    private boolean isTimeout(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (current instanceof SocketTimeoutException) {
+                return true;
+            }
+            String message = current.getMessage();
+            if (message != null && message.toLowerCase().contains("timed out")) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private String trimTrailingSlash(String value) {
