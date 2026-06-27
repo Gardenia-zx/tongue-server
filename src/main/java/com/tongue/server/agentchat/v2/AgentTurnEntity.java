@@ -11,7 +11,7 @@ import javax.persistence.Table;
 import javax.persistence.UniqueConstraint;
 import java.time.LocalDateTime;
 
-@Entity
+@Entity(name = "AgentChatV2TurnEntity")
 @Table(
         name = "agent_chat_turn",
         uniqueConstraints = {
