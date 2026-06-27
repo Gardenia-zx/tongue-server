@@ -2,6 +2,7 @@ package com.tongue.server.agentchat.v2;
 
 import org.junit.jupiter.api.Test;
 
+import javax.persistence.Entity;
 import javax.persistence.Table;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -10,21 +11,41 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 class AgentChatV2EntityMappingTest {
 
     @Test
-    void conversationUsesDedicatedChatTable() {
-        assertTableName(AgentConversationEntity.class, "agent_chat_conversation");
+    void conversationUsesDedicatedEntityAndTableNames() {
+        assertMapping(
+                AgentConversationEntity.class,
+                "AgentChatV2ConversationEntity",
+                "agent_chat_conversation"
+        );
     }
 
     @Test
-    void turnUsesDedicatedChatTable() {
-        assertTableName(AgentTurnEntity.class, "agent_chat_turn");
+    void turnUsesDedicatedEntityAndTableNames() {
+        assertMapping(
+                AgentTurnEntity.class,
+                "AgentChatV2TurnEntity",
+                "agent_chat_turn"
+        );
     }
 
     @Test
-    void messageUsesDedicatedChatTable() {
-        assertTableName(AgentMessageEntity.class, "agent_chat_message");
+    void messageUsesDedicatedEntityAndTableNames() {
+        assertMapping(
+                AgentMessageEntity.class,
+                "AgentChatV2MessageEntity",
+                "agent_chat_message"
+        );
     }
 
-    private void assertTableName(Class<?> entityType, String expectedTableName) {
+    private void assertMapping(
+            Class<?> entityType,
+            String expectedEntityName,
+            String expectedTableName
+    ) {
+        Entity entity = entityType.getAnnotation(Entity.class);
+        assertNotNull(entity, "Entity must declare @Entity");
+        assertEquals(expectedEntityName, entity.name());
+
         Table table = entityType.getAnnotation(Table.class);
         assertNotNull(table, "Entity must declare an explicit @Table mapping");
         assertEquals(expectedTableName, table.name());
