@@ -13,6 +13,7 @@ import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 
 import java.net.SocketTimeoutException;
+import java.util.Map;
 
 @Component
 public class TongueAgentClient {
@@ -94,12 +95,34 @@ public class TongueAgentClient {
         }
     }
 
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> explainReportCompare(Map<String, Object> request) {
+        try {
+            return restTemplate.postForObject(
+                    buildCompareUrl(),
+                    request,
+                    Map.class
+            );
+        } catch (Exception ex) {
+            throw new BusinessException(
+                    ErrorCode.AGENT_CALL_FAILED,
+                    "璋冪敤 Python Agent 鎶ュ憡瀵规瘮瑙ｉ噴澶辫触",
+                    null,
+                    ex
+            );
+        }
+    }
+
     private String buildRunUrl() {
         return buildUrl(agentProperties.getRunPath(), "/api/v1/agent/run");
     }
 
     private String buildAckUrl() {
         return buildUrl(agentProperties.getAckPath(), "/api/v1/agent/turns/ack");
+    }
+
+    private String buildCompareUrl() {
+        return buildUrl(agentProperties.getComparePath(), "/api/v1/agent/report-compare");
     }
 
     private String buildUrl(String configuredPath, String defaultPath) {

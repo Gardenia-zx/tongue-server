@@ -5,6 +5,9 @@ import com.tongue.server.common.BusinessException;
 import com.tongue.server.common.ErrorCode;
 import com.tongue.server.tongue.dto.EvidenceResponse;
 import com.tongue.server.tongue.dto.FeatureResponse;
+import com.tongue.server.tongue.dto.DashboardResponse;
+import com.tongue.server.tongue.dto.ReportCompareRequest;
+import com.tongue.server.tongue.dto.ReportCompareResponse;
 import com.tongue.server.tongue.dto.ReportDetailResponse;
 import com.tongue.server.tongue.dto.ReportListItemResponse;
 import com.tongue.server.tongue.dto.ReportVersionResponse;
@@ -17,6 +20,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -81,6 +85,11 @@ public class TongueAnalyzeController {
         return ApiResponse.success(tongueAnalysisAppService.reports());
     }
 
+    @GetMapping("/dashboard")
+    public ApiResponse<DashboardResponse> dashboard() {
+        return ApiResponse.success(tongueAnalysisAppService.dashboard());
+    }
+
     @GetMapping("/reports/{reportId}")
     public ApiResponse<ReportDetailResponse> report(@PathVariable Long reportId) {
         return ApiResponse.success(tongueAnalysisAppService.reportDetail(reportId));
@@ -104,6 +113,11 @@ public class TongueAnalyzeController {
     @PostMapping("/reports/{reportId}/export")
     public ApiResponse<ReportDetailResponse> export(@PathVariable Long reportId) {
         return ApiResponse.success(tongueAnalysisAppService.reportDetail(reportId));
+    }
+
+    @PostMapping("/reports/compare")
+    public ApiResponse<ReportCompareResponse> compare(@RequestBody ReportCompareRequest request) {
+        return ApiResponse.success(tongueAnalysisAppService.compareReports(request));
     }
 
     @DeleteMapping("/reports/{reportId}")

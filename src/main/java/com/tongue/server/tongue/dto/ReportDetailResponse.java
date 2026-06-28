@@ -2,6 +2,8 @@ package com.tongue.server.tongue.dto;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import java.util.Map;
+
 public class ReportDetailResponse {
     @JsonProperty("report_id")
     public Long reportId;
@@ -30,4 +32,16 @@ public class ReportDetailResponse {
     public Object draftReport;
     @JsonProperty("risk_disclaimer")
     public String riskDisclaimer;
+    @JsonProperty("structured_report")
+    public Object structuredReport;
+    @JsonProperty("analysis_quality_score")
+    public Double analysisQualityScore;
+    @JsonProperty("analysis_quality_level")
+    public String analysisQualityLevel;
+    @JsonProperty("quality_metrics")
+    public Map<String, Object> qualityMetrics;
+    @JsonProperty("quality_version")
+    public String qualityVersion;
+    @JsonProperty("analysis_quality_version")
+    public String analysisQualityVersion;
 }

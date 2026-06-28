@@ -8,6 +8,7 @@ public class AgentProperties {
     private String baseUrl = "http://127.0.0.1:8000";
     private String runPath = "/api/v1/agent/run";
     private String ackPath = "/api/v1/agent/turns/ack";
+    private String comparePath = "/api/v1/agent/report-compare";
     private int connectTimeoutMillis = 10000;
     private int readTimeoutMillis = 240000;
 
@@ -33,6 +34,14 @@ public class AgentProperties {
 
     public void setAckPath(String ackPath) {
         this.ackPath = ackPath;
+    }
+
+    public String getComparePath() {
+        return comparePath;
+    }
+
+    public void setComparePath(String comparePath) {
+        this.comparePath = comparePath;
     }
 
     public int getConnectTimeoutMillis() {

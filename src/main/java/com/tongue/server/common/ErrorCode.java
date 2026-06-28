@@ -2,6 +2,7 @@ package com.tongue.server.common;
 
 public final class ErrorCode {
 
+    public static final int BAD_REQUEST = 40000;
     public static final int IMAGE_TYPE_UNSUPPORTED = 40001;
     public static final int IMAGE_TOO_LARGE = 40002;
     public static final int IMAGE_EMPTY = 40003;
