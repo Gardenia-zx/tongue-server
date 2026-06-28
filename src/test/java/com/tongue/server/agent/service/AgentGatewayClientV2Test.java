@@ -32,6 +32,28 @@ class AgentGatewayClientV2Test {
     }
 
     @Test
+    void statefulReportPayloadIncludesOnlyReportRefContextBundle() {
+        AgentGatewayClientV2.Invocation invocation = invocation();
+        ObjectNode reportRef = new ObjectMapper().createObjectNode();
+        reportRef.put("report_id", 9L);
+        reportRef.put("trusted", true);
+        ObjectNode loadedSections = new ObjectMapper().createObjectNode();
+        loadedSections.put("status", "OK");
+        loadedSections.put("report_id", 9L);
+        invocation.setReportId(9L);
+        invocation.setReportContextMode("ACTIVE_REPORT");
+        invocation.setActiveReportRef(reportRef);
+        invocation.setLoadedReportSections(loadedSections);
+
+        ObjectNode payload = client.buildPayload(invocation);
+
+        assertEquals(9L, payload.path("context_bundle").path("active_report_ref").path("report_id").asLong());
+        assertEquals(9L, payload.path("context_bundle").path("loaded_report_sections").path("report_id").asLong());
+        assertFalse(payload.path("context_bundle").has("recent_messages"));
+        assertFalse(payload.path("context_bundle").has("conversation_summary"));
+    }
+
+    @Test
     void mysqlRecoveryPayloadIncludesContextBundle() {
         AgentGatewayClientV2.Invocation invocation = invocation();
         invocation.setContextMode("mysql_recovery");

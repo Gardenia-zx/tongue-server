@@ -85,7 +85,7 @@ public class AgentGatewayClientV2 {
 
         String contextMode = invocation.getContextMode();
         boolean mysqlRecovery = "mysql_recovery".equals(contextMode);
-        if (mysqlRecovery || invocation.getActiveReportRef() != null) {
+        if (mysqlRecovery || invocation.getActiveReportRef() != null || invocation.getLoadedReportSections() != null) {
             ObjectNode contextBundle = payload.putObject("context_bundle");
             if (mysqlRecovery) {
                 contextBundle.put("mode", "mysql_recovery");
@@ -94,6 +94,9 @@ public class AgentGatewayClientV2 {
             }
             if (invocation.getActiveReportRef() != null) {
                 contextBundle.set("active_report_ref", invocation.getActiveReportRef());
+            }
+            if (invocation.getLoadedReportSections() != null) {
+                contextBundle.set("loaded_report_sections", invocation.getLoadedReportSections());
             }
         }
 
@@ -134,6 +137,7 @@ public class AgentGatewayClientV2 {
         private String reportContextMode = "AUTO";
         private Long reportId;
         private JsonNode activeReportRef;
+        private JsonNode loadedReportSections;
         private List<AgentChatMessageEntity> recentMessages;
         private Map<String, Object> clientContext;
         private String contextMode = "stateful";
@@ -170,6 +174,8 @@ public class AgentGatewayClientV2 {
         public void setReportId(Long reportId) { this.reportId = reportId; }
         public JsonNode getActiveReportRef() { return activeReportRef; }
         public void setActiveReportRef(JsonNode activeReportRef) { this.activeReportRef = activeReportRef; }
+        public JsonNode getLoadedReportSections() { return loadedReportSections; }
+        public void setLoadedReportSections(JsonNode loadedReportSections) { this.loadedReportSections = loadedReportSections; }
         public List<AgentChatMessageEntity> getRecentMessages() { return recentMessages; }
         public void setRecentMessages(List<AgentChatMessageEntity> recentMessages) { this.recentMessages = recentMessages; }
         public Map<String, Object> getClientContext() { return clientContext; }

@@ -76,7 +76,8 @@ public class AgentChatTurnStore {
                 conversation,
                 request.getThreadId(),
                 bindingMode,
-                requestedReportId
+                requestedReportId,
+                request.getMessage() == null ? "" : request.getMessage().getContent()
         );
         if (resolvedReportId != null) {
             conversation.setActiveReportId(resolvedReportId);
@@ -138,7 +139,8 @@ public class AgentChatTurnStore {
             AgentChatConversationEntity conversation,
             String threadId,
             String bindingMode,
-            Long requestedReportId
+            Long requestedReportId,
+            String messageText
     ) {
         if ("NONE".equals(bindingMode)) {
             return null;
@@ -177,7 +179,21 @@ public class AgentChatTurnStore {
         if (latestThreadReportId != null) {
             return validateOptionalReport(userId, latestThreadReportId);
         }
+        if ("AUTO".equals(bindingMode) && mentionsReport(messageText)) {
+            return validateOptionalReport(userId, findLatestUserReportId(userId));
+        }
         return null;
+    }
+
+    private boolean mentionsReport(String text) {
+        if (text == null) {
+            return false;
+        }
+        String compact = text.replaceAll("\\s+", "");
+        return compact.contains("报告")
+                || compact.contains("舌象结果")
+                || compact.contains("分析结果")
+                || compact.contains("识别结果");
     }
 
     private Long validateOptionalReport(long userId, Long reportId) {
@@ -218,6 +234,17 @@ public class AgentChatTurnStore {
                 Long.class,
                 userId,
                 threadId
+        );
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    private Long findLatestUserReportId(long userId) {
+        List<Long> rows = jdbcTemplate.queryForList(
+                "SELECT id FROM tongue_report " +
+                        "WHERE user_id = ? AND deleted_at IS NULL " +
+                        "ORDER BY updated_at DESC, id DESC LIMIT 1",
+                Long.class,
+                userId
         );
         return rows.isEmpty() ? null : rows.get(0);
     }
