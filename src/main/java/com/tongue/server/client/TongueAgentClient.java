@@ -13,6 +13,7 @@ import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 
 import java.net.SocketTimeoutException;
+import java.util.Collections;
 import java.util.Map;
 
 @Component
@@ -44,6 +45,7 @@ public class TongueAgentClient {
                         request.getTraceId()
                 );
             }
+            validateAnalysisResponse(request, response);
             return response;
         } catch (HttpStatusCodeException ex) {
             if (ex.getStatusCode() == HttpStatus.CONFLICT) {
@@ -111,6 +113,41 @@ public class TongueAgentClient {
                     ex
             );
         }
+    }
+
+    private void validateAnalysisResponse(AgentRunRequest request, AgentRunResponse response) {
+        if (request == null
+                || request.getClientContext() == null
+                || !"tongue_analyze".equals(request.getClientContext().getPage())
+                || !"COMPLETED".equals(response.getStatus())) {
+            return;
+        }
+
+        Map<String, Object> payload = safeMap(safeMap(response.getNextAction()).get("payload"));
+        Map<String, Object> draftReport = safeMap(payload.get("draft_report"));
+        String answerType = text(payload.get("answer_type"));
+        String reportStatus = text(draftReport.get("report_status"));
+
+        if (draftReport.isEmpty()
+                || !"TONGUE_REPORT".equals(answerType)
+                || !("FINAL".equals(reportStatus) || "COMPLETED".equals(reportStatus))) {
+            throw new BusinessException(
+                    ErrorCode.AGENT_CALL_FAILED,
+                    "Python Agent 未返回有效舌象报告",
+                    request.getTraceId()
+            );
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> safeMap(Object value) {
+        return value instanceof Map
+                ? (Map<String, Object>) value
+                : Collections.<String, Object>emptyMap();
+    }
+
+    private String text(Object value) {
+        return value == null ? "" : String.valueOf(value);
     }
 
     private String buildRunUrl() {
