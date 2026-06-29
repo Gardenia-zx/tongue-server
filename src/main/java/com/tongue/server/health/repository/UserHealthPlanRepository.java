@@ -9,6 +9,12 @@ import java.util.Optional;
 public interface UserHealthPlanRepository extends JpaRepository<UserHealthPlanEntity, Long> {
     Optional<UserHealthPlanEntity> findFirstByUserIdAndStatusOrderByCreatedAtDesc(Long userId, String status);
 
+    Optional<UserHealthPlanEntity> findFirstByUserIdAndSourceReportIdAndStatusOrderByCreatedAtDesc(
+            Long userId,
+            Long sourceReportId,
+            String status
+    );
+
     List<UserHealthPlanEntity> findByUserIdAndStatus(Long userId, String status);
 
     Optional<UserHealthPlanEntity> findByIdAndUserId(Long id, Long userId);
