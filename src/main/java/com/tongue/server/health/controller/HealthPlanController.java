@@ -4,11 +4,13 @@ import com.tongue.server.common.ApiResponse;
 import com.tongue.server.health.dto.CheckinSummaryResponse;
 import com.tongue.server.health.dto.DailyCheckinRequest;
 import com.tongue.server.health.dto.DailyCheckinResponse;
+import com.tongue.server.health.dto.HealthPlanDraftUpdateRequest;
 import com.tongue.server.health.dto.HealthPlanResponse;
 import com.tongue.server.health.service.HealthPlanService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -29,9 +31,32 @@ public class HealthPlanController {
         return ApiResponse.success(healthPlanService.current());
     }
 
+    @GetMapping("/api/health-plans/{planId}")
+    public ApiResponse<HealthPlanResponse> detail(@PathVariable Long planId) {
+        return ApiResponse.success(healthPlanService.detail(planId));
+    }
+
     @PostMapping("/api/health-plans/from-report/{reportId}")
     public ApiResponse<HealthPlanResponse> fromReport(@PathVariable Long reportId) {
-        return ApiResponse.success(healthPlanService.createFromReport(reportId));
+        return ApiResponse.success(healthPlanService.createDraftFromReport(reportId));
+    }
+
+    @PostMapping("/api/health-plans/from-report/{reportId}/draft")
+    public ApiResponse<HealthPlanResponse> draftFromReport(@PathVariable Long reportId) {
+        return ApiResponse.success(healthPlanService.createDraftFromReport(reportId));
+    }
+
+    @PutMapping("/api/health-plans/{planId}/draft")
+    public ApiResponse<HealthPlanResponse> updateDraft(
+            @PathVariable Long planId,
+            @RequestBody HealthPlanDraftUpdateRequest request
+    ) {
+        return ApiResponse.success(healthPlanService.updateDraft(planId, request));
+    }
+
+    @PostMapping("/api/health-plans/{planId}/activate")
+    public ApiResponse<HealthPlanResponse> activate(@PathVariable Long planId) {
+        return ApiResponse.success(healthPlanService.activate(planId));
     }
 
     @PostMapping("/api/health-plans/{planId}/close")
