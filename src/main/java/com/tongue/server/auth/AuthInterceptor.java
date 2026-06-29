@@ -68,6 +68,7 @@ public class AuthInterceptor implements HandlerInterceptor {
                 || path.equals("/api/auth/sms/send")
                 || path.equals("/api/auth/sms/login")
                 || path.equals("/api/admin/auth/login")
+                || path.startsWith("/api/public/profile-avatars/")
                 || (path.equals("/api/doctors") && "GET".equalsIgnoreCase(request.getMethod()))
                 || path.startsWith("/error");
     }
