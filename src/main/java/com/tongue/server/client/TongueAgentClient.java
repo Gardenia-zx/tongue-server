@@ -6,6 +6,8 @@ import com.tongue.server.config.AgentProperties;
 import com.tongue.server.dto.AgentRunRequest;
 import com.tongue.server.dto.AgentRunResponse;
 import com.tongue.server.dto.AgentTurnAckRequest;
+import com.tongue.server.tongue.entity.TongueAnalysisTaskEntity;
+import com.tongue.server.tongue.repository.TongueAnalysisTaskRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpStatusCodeException;
@@ -13,25 +15,43 @@ import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 
 import java.net.SocketTimeoutException;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
 @Component
 public class TongueAgentClient {
 
     private final RestTemplate restTemplate;
     private final AgentProperties agentProperties;
+    private final TongueAnalysisTaskRepository taskRepository;
+    private final ScheduledExecutorService progressScheduler = Executors.newScheduledThreadPool(
+            2,
+            runnable -> {
+                Thread thread = new Thread(runnable, "tongue-analysis-progress");
+                thread.setDaemon(true);
+                return thread;
+            }
+    );
 
     public TongueAgentClient(
             RestTemplate restTemplate,
-            AgentProperties agentProperties
+            AgentProperties agentProperties,
+            TongueAnalysisTaskRepository taskRepository
     ) {
         this.restTemplate = restTemplate;
         this.agentProperties = agentProperties;
+        this.taskRepository = taskRepository;
     }
 
     public AgentRunResponse runAgent(AgentRunRequest request) {
         String url = buildRunUrl();
+        List<ScheduledFuture<?>> progressJobs = scheduleAnalysisProgress(request);
         try {
             AgentRunResponse response = restTemplate.postForObject(
                     url,
@@ -77,6 +97,8 @@ public class TongueAgentClient {
                     request.getTraceId(),
                     ex
             );
+        } finally {
+            cancelProgressJobs(progressJobs);
         }
     }
 
@@ -108,17 +130,89 @@ public class TongueAgentClient {
         } catch (Exception ex) {
             throw new BusinessException(
                     ErrorCode.AGENT_CALL_FAILED,
-                    "璋冪敤 Python Agent 鎶ュ憡瀵规瘮瑙ｉ噴澶辫触",
+                    "调用 Python Agent 报告对比解释失败",
                     null,
                     ex
             );
         }
     }
 
+    private List<ScheduledFuture<?>> scheduleAnalysisProgress(AgentRunRequest request) {
+        if (!isDedicatedAnalysisRequest(request) || request.getTaskId() == null) {
+            return Collections.emptyList();
+        }
+
+        Long taskId = request.getTaskId();
+        List<ScheduledFuture<?>> jobs = new ArrayList<ScheduledFuture<?>>();
+        jobs.add(progressScheduler.schedule(
+                () -> advanceTaskStage(taskId, "RESULT_ANALYZING", 0.42),
+                2,
+                TimeUnit.SECONDS
+        ));
+        jobs.add(progressScheduler.schedule(
+                () -> advanceTaskStage(taskId, "RAG_RETRIEVING", 0.62),
+                5,
+                TimeUnit.SECONDS
+        ));
+        jobs.add(progressScheduler.schedule(
+                () -> advanceTaskStage(taskId, "REPORT_GENERATING", 0.78),
+                9,
+                TimeUnit.SECONDS
+        ));
+        return jobs;
+    }
+
+    private void advanceTaskStage(Long taskId, String nextStage, double nextProgress) {
+        try {
+            TongueAnalysisTaskEntity task = taskRepository.findById(taskId).orElse(null);
+            if (task == null || !"RUNNING".equals(task.status)) {
+                return;
+            }
+            if (stageRank(task.currentStage) >= stageRank(nextStage)) {
+                return;
+            }
+
+            task.currentStage = nextStage;
+            task.progress = Math.max(task.progress == null ? 0.0 : task.progress, nextProgress);
+            taskRepository.save(task);
+        } catch (Exception ignored) {
+            // Progress heartbeat must never fail the actual analysis request.
+        }
+    }
+
+    private int stageRank(String stage) {
+        if ("MODEL_ANALYZING".equals(stage)) {
+            return 1;
+        }
+        if ("RESULT_ANALYZING".equals(stage)) {
+            return 2;
+        }
+        if ("RAG_RETRIEVING".equals(stage)) {
+            return 3;
+        }
+        if ("REPORT_GENERATING".equals(stage)) {
+            return 4;
+        }
+        if ("REPORT_READY".equals(stage) || "COMPLETED".equals(stage)) {
+            return 5;
+        }
+        return 0;
+    }
+
+    private void cancelProgressJobs(List<ScheduledFuture<?>> jobs) {
+        for (ScheduledFuture<?> job : jobs) {
+            job.cancel(false);
+        }
+    }
+
+    private boolean isDedicatedAnalysisRequest(AgentRunRequest request) {
+        return request != null
+                && request.getClientContext() != null
+                && "tongue_analyze".equals(request.getClientContext().getPage());
+    }
+
     private void validateAnalysisResponse(AgentRunRequest request, AgentRunResponse response) {
-        if (request == null
-                || request.getClientContext() == null
-                || !"tongue_analyze".equals(request.getClientContext().getPage())
+        if (!isDedicatedAnalysisRequest(request)
                 || !"COMPLETED".equals(response.getStatus())) {
             return;
         }
