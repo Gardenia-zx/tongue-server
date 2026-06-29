@@ -86,6 +86,14 @@ public class HealthPlanService {
         Long userId = AuthContext.requireUserId();
         TongueReportEntity report = reportRepository.findByIdAndUserIdAndDeletedAtIsNull(reportId, userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "报告不存在或无权访问", null));
+
+        UserHealthPlanEntity existingDraft = planRepository
+                .findFirstByUserIdAndSourceReportIdAndStatusOrderByCreatedAtDesc(userId, reportId, DRAFT)
+                .orElse(null);
+        if (existingDraft != null) {
+            return toPlanResponse(existingDraft);
+        }
+
         PlanPayload payload = extractPlan(report);
         if (!payload.isComplete()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "这份报告缺少饮食、睡眠或运动建议，无法生成计划草稿", null);
@@ -105,7 +113,7 @@ public class HealthPlanService {
         plan.exerciseGoalJson = writeJson(payload.exerciseGoal);
         plan.observationItemsJson = writeJson(payload.observationItems);
         plan.schemaVersion = "2.0";
-        plan.generationMode = "AI_DRAFT";
+        plan.generationMode = "RECOMMENDED_DRAFT";
         plan.planContentJson = writeJson(buildDraftDays(payload, today));
         return toPlanResponse(planRepository.save(plan));
     }
