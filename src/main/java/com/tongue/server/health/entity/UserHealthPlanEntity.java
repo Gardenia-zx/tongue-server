@@ -46,7 +46,7 @@ public class UserHealthPlanEntity extends BaseEntity {
     public String schemaVersion = "2.0";
 
     @Column(length = 24)
-    public String generationMode = "AI_DRAFT";
+    public String generationMode = "RECOMMENDED_DRAFT";
 
     public LocalDateTime activatedAt;
 
