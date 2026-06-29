@@ -31,7 +31,8 @@ public class WebConfig implements WebMvcConfigurer {
                 .excludePathPatterns(
                         "/api/auth/sms/send",
                         "/api/auth/sms/login",
-                        "/api/admin/auth/login"
+                        "/api/admin/auth/login",
+                        "/api/public/profile-avatars/**"
                 );
     }
 }
