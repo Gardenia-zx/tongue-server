@@ -18,6 +18,7 @@ import com.tongue.server.health.repository.UserHealthPlanRepository;
 import com.tongue.server.notification.service.NotificationService;
 import com.tongue.server.tongue.entity.TongueReportEntity;
 import com.tongue.server.tongue.repository.TongueReportRepository;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -125,8 +126,12 @@ public class HealthPlanService {
         UserHealthPlanEntity plan = planRepository.findFirstByUserIdAndStatusOrderByCreatedAtDesc(userId, ACTIVE)
                 .orElseThrow(() -> new BusinessException(ErrorCode.BAD_REQUEST, "当前没有进行中的健康计划", null));
         LocalDate today = LocalDate.now();
-        UserDailyCheckinEntity entity = checkinRepository.findByUserIdAndCheckinDate(userId, today)
-                .orElseGet(UserDailyCheckinEntity::new);
+
+        if (checkinRepository.findByUserIdAndCheckinDate(userId, today).isPresent()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "今天已经记录了，请明天再来打卡", null);
+        }
+
+        UserDailyCheckinEntity entity = new UserDailyCheckinEntity();
         entity.userId = userId;
         entity.planId = plan.id;
         entity.checkinDate = today;
@@ -135,7 +140,12 @@ public class HealthPlanService {
         entity.exerciseDone = Boolean.TRUE.equals(request.exerciseDone);
         entity.observationJson = writeJson(request.observation);
         entity.note = trimToNull(request.note);
-        return toCheckinResponse(checkinRepository.save(entity));
+
+        try {
+            return toCheckinResponse(checkinRepository.saveAndFlush(entity));
+        } catch (DataIntegrityViolationException ex) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "今天已经记录了，请明天再来打卡", null, ex);
+        }
     }
 
     @Transactional(readOnly = true)
