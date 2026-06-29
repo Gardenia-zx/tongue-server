@@ -41,6 +41,7 @@ import com.tongue.server.notification.repository.UserNotificationRepository;
 import com.tongue.server.review.entity.DoctorReviewOrderEntity;
 import com.tongue.server.review.repository.DoctorReviewOrderRepository;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -343,8 +344,9 @@ public class TongueAnalysisAppService {
         response.reportCount = reports.size();
         response.latestReport = reports.isEmpty() ? null : toReportListItem(reports.get(0));
         response.trendStatus = buildTrendStatus(reports.size());
-        response.unreadNotificationCount = notificationRepository.countByUserIdAndReadAtIsNull(userId);
-        response.recentNotifications = notificationRepository.findTop3ByUserIdOrderByCreatedAtDesc(userId);
+        LocalDateTime now = LocalDateTime.now();
+        response.unreadNotificationCount = notificationRepository.countVisibleUnreadByUserId(userId, now);
+        response.recentNotifications = notificationRepository.findTopVisibleByUserIdOrderByCreatedAtDesc(userId, now, PageRequest.of(0, 3));
         response.todos = buildDashboardTodos(userId, reports.size(), response.unreadNotificationCount);
         return response;
     }

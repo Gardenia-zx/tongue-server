@@ -1,0 +1,38 @@
+package com.tongue.server.health.dto;
+
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Map;
+
+public class HealthPlanResponse {
+    @JsonProperty("plan_id")
+    public Long planId;
+    @JsonProperty("user_id")
+    public Long userId;
+    @JsonProperty("source_report_id")
+    public Long sourceReportId;
+    public String status;
+    @JsonProperty("start_date")
+    public LocalDate startDate;
+    @JsonProperty("end_date")
+    public LocalDate endDate;
+    @JsonProperty("diet_goal")
+    public Map<String, Object> dietGoal;
+    @JsonProperty("sleep_goal")
+    public Map<String, Object> sleepGoal;
+    @JsonProperty("exercise_goal")
+    public Map<String, Object> exerciseGoal;
+    @JsonProperty("observation_items")
+    public List<String> observationItems;
+    @JsonProperty("today_checkin")
+    public DailyCheckinResponse todayCheckin;
+    @JsonProperty("next_retake_date")
+    public LocalDate nextRetakeDate;
+    @JsonProperty("created_at")
+    public LocalDateTime createdAt;
+    @JsonProperty("updated_at")
+    public LocalDateTime updatedAt;
+}

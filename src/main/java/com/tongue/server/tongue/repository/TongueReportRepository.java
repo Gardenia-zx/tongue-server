@@ -10,4 +10,6 @@ public interface TongueReportRepository extends JpaRepository<TongueReportEntity
     List<TongueReportEntity> findByUserIdAndDeletedAtIsNullOrderByCreatedAtDesc(Long userId);
 
     Optional<TongueReportEntity> findByIdAndUserIdAndDeletedAtIsNull(Long id, Long userId);
+
+    Optional<TongueReportEntity> findFirstByUserIdAndDeletedAtIsNullOrderByCreatedAtDesc(Long userId);
 }

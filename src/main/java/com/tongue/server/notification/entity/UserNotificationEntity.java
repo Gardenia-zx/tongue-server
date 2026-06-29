@@ -26,5 +26,7 @@ public class UserNotificationEntity extends BaseEntity {
     @Column(columnDefinition = "json")
     public String payloadJson;
 
+    public LocalDateTime scheduledAt;
+
     public LocalDateTime readAt;
 }

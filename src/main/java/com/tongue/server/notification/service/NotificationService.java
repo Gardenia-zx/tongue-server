@@ -28,18 +28,31 @@ public class NotificationService {
             String content,
             String payloadJson
     ) {
+        create(userId, type, title, content, payloadJson, null);
+    }
+
+    @Transactional
+    public void create(
+            Long userId,
+            String type,
+            String title,
+            String content,
+            String payloadJson,
+            LocalDateTime scheduledAt
+    ) {
         UserNotificationEntity entity = new UserNotificationEntity();
         entity.userId = userId;
         entity.type = type;
         entity.title = title;
         entity.content = content;
         entity.payloadJson = payloadJson;
+        entity.scheduledAt = scheduledAt;
         notificationRepository.save(entity);
     }
 
     @Transactional(readOnly = true)
     public List<UserNotificationEntity> myNotifications() {
-        return notificationRepository.findByUserIdOrderByCreatedAtDesc(AuthContext.requireUserId());
+        return notificationRepository.findVisibleByUserIdOrderByCreatedAtDesc(AuthContext.requireUserId(), LocalDateTime.now());
     }
 
     @Transactional
@@ -61,11 +74,20 @@ public class NotificationService {
     @Transactional
     public void markAllRead() {
         Long userId = AuthContext.requireUserId();
-        for (UserNotificationEntity notification : notificationRepository.findByUserIdOrderByCreatedAtDesc(userId)) {
+        for (UserNotificationEntity notification : notificationRepository.findVisibleByUserIdOrderByCreatedAtDesc(userId, LocalDateTime.now())) {
             if (notification.readAt == null) {
                 notification.readAt = LocalDateTime.now();
                 notificationRepository.save(notification);
             }
+        }
+    }
+
+    @Transactional
+    public void markUnreadTypeRead(Long userId, String type) {
+        LocalDateTime now = LocalDateTime.now();
+        for (UserNotificationEntity notification : notificationRepository.findByUserIdAndTypeAndReadAtIsNull(userId, type)) {
+            notification.readAt = now;
+            notificationRepository.save(notification);
         }
     }
 }
