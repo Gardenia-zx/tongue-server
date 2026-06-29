@@ -158,9 +158,10 @@ public class HealthPlanService {
         Long userId = AuthContext.requireUserId();
         UserHealthPlanEntity plan = planRepository.findByIdAndUserId(planId, userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "健康计划不存在", null));
+        boolean wasActive = ACTIVE.equals(plan.status);
         plan.status = CLOSED;
         plan.closedAt = LocalDateTime.now();
-        if (ACTIVE.equals(plan.status)) {
+        if (wasActive) {
             notificationService.markUnreadTypeRead(userId, RETAKE_NOTIFICATION_TYPE);
         }
         return toPlanResponse(planRepository.save(plan));
