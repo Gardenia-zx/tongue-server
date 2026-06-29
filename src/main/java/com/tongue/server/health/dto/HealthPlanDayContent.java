@@ -1,14 +1,11 @@
 package com.tongue.server.health.dto;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
-
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 
 public class HealthPlanDayContent {
 
-    @JsonProperty("day_index")
     public Integer dayIndex;
 
     public LocalDate date;
@@ -30,23 +27,15 @@ public class HealthPlanDayContent {
 
     public static class ExerciseContent {
         public String activity;
-
-        @JsonProperty("duration_minutes")
         public Integer durationMinutes;
-
         public String intensity;
-
         public List<String> warmup = new ArrayList<String>();
         public List<String> cooldown = new ArrayList<String>();
     }
 
     public static class SleepContent {
-        @JsonProperty("target_bedtime")
         public String targetBedtime;
-
-        @JsonProperty("target_wake_time")
         public String targetWakeTime;
-
         public List<String> actions = new ArrayList<String>();
     }
 }
