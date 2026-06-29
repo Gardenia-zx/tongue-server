@@ -26,16 +26,20 @@ import com.tongue.server.tongue.dto.ReportListItemResponse;
 import com.tongue.server.tongue.dto.ReportVersionResponse;
 import com.tongue.server.tongue.dto.TaskStatusResponse;
 import com.tongue.server.tongue.dto.TongueAnalyzeCreateResponse;
+import com.tongue.server.tongue.dto.UserStateSnapshotRequest;
+import com.tongue.server.tongue.dto.UserStateSnapshotResponse;
 import com.tongue.server.tongue.entity.TongueAnalysisTaskEntity;
 import com.tongue.server.tongue.entity.TongueReportEntity;
 import com.tongue.server.tongue.entity.TongueReportEvidenceEntity;
 import com.tongue.server.tongue.entity.TongueReportFeatureEntity;
 import com.tongue.server.tongue.entity.TongueReportVersionEntity;
+import com.tongue.server.tongue.entity.UserStateSnapshotEntity;
 import com.tongue.server.tongue.repository.TongueAnalysisTaskRepository;
 import com.tongue.server.tongue.repository.TongueReportEvidenceRepository;
 import com.tongue.server.tongue.repository.TongueReportFeatureRepository;
 import com.tongue.server.tongue.repository.TongueReportRepository;
 import com.tongue.server.tongue.repository.TongueReportVersionRepository;
+import com.tongue.server.tongue.repository.UserStateSnapshotRepository;
 import com.tongue.server.notification.service.NotificationService;
 import com.tongue.server.notification.repository.UserNotificationRepository;
 import com.tongue.server.review.entity.DoctorReviewOrderEntity;
@@ -82,6 +86,7 @@ public class TongueAnalysisAppService {
     private final AuthService authService;
     private final UserNotificationRepository notificationRepository;
     private final DoctorReviewOrderRepository reviewOrderRepository;
+    private final UserStateSnapshotRepository stateSnapshotRepository;
 
     public TongueAnalysisAppService(
             StorageService storageService,
@@ -98,7 +103,8 @@ public class TongueAnalysisAppService {
             ConversationContextService conversationContextService,
             AuthService authService,
             UserNotificationRepository notificationRepository,
-            DoctorReviewOrderRepository reviewOrderRepository
+            DoctorReviewOrderRepository reviewOrderRepository,
+            UserStateSnapshotRepository stateSnapshotRepository
     ) {
         this.storageService = storageService;
         this.tongueAgentClient = tongueAgentClient;
@@ -115,6 +121,7 @@ public class TongueAnalysisAppService {
         this.authService = authService;
         this.notificationRepository = notificationRepository;
         this.reviewOrderRepository = reviewOrderRepository;
+        this.stateSnapshotRepository = stateSnapshotRepository;
     }
 
     @Transactional
@@ -124,6 +131,28 @@ public class TongueAnalysisAppService {
             String requestThreadId,
             String traceId,
             String userDescription
+    ) {
+        return createAnalysisInternal(image, conversationId, requestThreadId, traceId, userDescription, true);
+    }
+
+    @Transactional
+    public TongueAnalyzeCreateResponse prepareAnalysis(
+            MultipartFile image,
+            String conversationId,
+            String requestThreadId,
+            String traceId,
+            String userDescription
+    ) {
+        return createAnalysisInternal(image, conversationId, requestThreadId, traceId, userDescription, false);
+    }
+
+    private TongueAnalyzeCreateResponse createAnalysisInternal(
+            MultipartFile image,
+            String conversationId,
+            String requestThreadId,
+            String traceId,
+            String userDescription,
+            boolean autoStart
     ) {
         Long userId = AuthContext.requireUserId();
         String normalizedUserDescription = normalizeUserDescription(userDescription);
@@ -147,8 +176,8 @@ public class TongueAnalysisAppService {
         TongueAnalysisTaskEntity task = new TongueAnalysisTaskEntity();
         task.userId = userId;
         task.reportId = report.id;
-        task.status = "PENDING";
-        task.currentStage = "PENDING";
+        task.status = autoStart ? "PENDING" : "WAITING_STATE";
+        task.currentStage = autoStart ? "PENDING" : "STATE_COLLECTING";
         task.progress = 0.0;
         task.traceId = traceId;
         taskRepository.save(task);
@@ -172,7 +201,9 @@ public class TongueAnalysisAppService {
         );
         conversationContextService.markImageSubmitted(conversation, report.imageFileId);
 
-        submitTaskAfterCommit(task.id, String.valueOf(conversation.id), normalizedUserDescription);
+        if (autoStart) {
+            submitTaskAfterCommit(task.id, String.valueOf(conversation.id), normalizedUserDescription);
+        }
 
         TongueAnalyzeCreateResponse response = new TongueAnalyzeCreateResponse();
         response.reportId = report.id;
@@ -181,6 +212,39 @@ public class TongueAnalysisAppService {
         response.threadId = conversation.threadId;
         response.status = task.status;
         return response;
+    }
+
+    @Transactional
+    public TaskStatusResponse submitStateSnapshot(Long taskId, UserStateSnapshotRequest request) {
+        Long userId = AuthContext.requireUserId();
+        TongueAnalysisTaskEntity task = taskRepository.findById(taskId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "任务不存在", null));
+        if (!userId.equals(task.userId) && !"ADMIN".equals(AuthContext.get().role)) {
+            throw new BusinessException(ErrorCode.ACCESS_DENIED, "没有任务访问权限", null);
+        }
+        if (!"WAITING_STATE".equals(task.status)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "当前任务不在状态补充阶段", task.traceId);
+        }
+        TongueReportEntity report = loadReportForUser(task.reportId, userId);
+        UserStateSnapshotEntity snapshot = stateSnapshotRepository.findByTaskId(task.id)
+                .orElseGet(UserStateSnapshotEntity::new);
+        applyStateSnapshot(snapshot, request, task.userId, report.id, task.id);
+        stateSnapshotRepository.save(snapshot);
+
+        task.status = "PENDING";
+        task.currentStage = "PENDING";
+        task.progress = 0.0;
+        task.errorCode = null;
+        task.errorMessage = null;
+        task.startedAt = null;
+        task.finishedAt = null;
+        taskRepository.save(task);
+        submitTaskAfterCommit(
+                task.id,
+                conversationContextService.resolveConversationIdForReport(task.userId, task.reportId),
+                snapshot.freeDescription
+        );
+        return toTaskStatus(task);
     }
 
     public void submitTask(
@@ -548,6 +612,9 @@ public class TongueAnalysisAppService {
         extra.put("file_id", imageFile.id);
         extra.put("source", "tongue-server-storage");
         extra.put("context_bundle", contextBundle);
+        stateSnapshotRepository.findByReportId(report.id)
+                .map(this::toStateSnapshotMap)
+                .ifPresent(snapshot -> extra.put("state_snapshot", snapshot));
         if (StringUtils.hasText(normalizedUserDescription)) {
             extra.put("user_description", normalizedUserDescription);
             extra.put("symptom_description", normalizedUserDescription);
@@ -1280,6 +1347,103 @@ public class TongueAnalysisAppService {
         return Math.max(0.0, Math.min(1.0, value));
     }
 
+    private void applyStateSnapshot(
+            UserStateSnapshotEntity snapshot,
+            UserStateSnapshotRequest request,
+            Long userId,
+            Long reportId,
+            Long taskId
+    ) {
+        boolean skipped = request == null || Boolean.TRUE.equals(request.skipped);
+        snapshot.userId = userId;
+        snapshot.reportId = reportId;
+        snapshot.taskId = taskId;
+        snapshot.observationWindow = "LAST_3_DAYS";
+        snapshot.skipped = skipped;
+        snapshot.sleepStatus = skipped ? null : enumValue(request.sleepStatus, "NORMAL", "SHORT", "DIFFICULT_OR_WAKE", "IRREGULAR_LATE");
+        snapshot.digestionStatus = skipped ? null : enumValue(request.digestionStatus, "NORMAL", "POOR_APPETITE", "BLOATING", "GREASY_REFLUX_DISCOMFORT");
+        snapshot.bowelStatus = skipped ? null : enumValue(request.bowelStatus, "NORMAL", "DRY_CONSTIPATION", "LOOSE_DIARRHEA", "STICKY_INCOMPLETE");
+        snapshot.currentStatesJson = writeJsonQuiet(skipped ? new ArrayList<String>() : enumList(
+                request.currentStates,
+                "NORMAL", "FATIGUE", "STRESS_ANXIETY", "COLD_SENSITIVE", "HEAT_DRY_MOUTH"
+        ));
+        snapshot.healthGoalsJson = writeJsonQuiet(skipped ? new ArrayList<String>() : enumList(
+                request.healthGoals,
+                "DIET_DIGESTION", "SLEEP_ROUTINE", "FITNESS", "FATIGUE_ENERGY", "WEIGHT_MANAGEMENT", "UNDERSTAND_TONGUE"
+        ));
+        snapshot.freeDescription = skipped ? null : normalizeUserDescription(request.freeDescription);
+    }
+
+    private String enumValue(String value, String... allowed) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        String normalized = value.trim().toUpperCase();
+        for (String item : allowed) {
+            if (item.equals(normalized)) {
+                return normalized;
+            }
+        }
+        return null;
+    }
+
+    private List<String> enumList(List<String> values, String... allowed) {
+        List<String> result = new ArrayList<String>();
+        if (values == null) {
+            return result;
+        }
+        for (String value : values) {
+            String normalized = enumValue(value, allowed);
+            if (StringUtils.hasText(normalized) && !result.contains(normalized)) {
+                result.add(normalized);
+            }
+        }
+        if (result.contains("NORMAL") && result.size() > 1) {
+            result.remove("NORMAL");
+        }
+        return result;
+    }
+
+    private Map<String, Object> toStateSnapshotMap(UserStateSnapshotEntity snapshot) {
+        Map<String, Object> result = new LinkedHashMap<String, Object>();
+        result.put("observation_window", snapshot.observationWindow);
+        result.put("sleep_status", snapshot.sleepStatus);
+        result.put("digestion_status", snapshot.digestionStatus);
+        result.put("bowel_status", snapshot.bowelStatus);
+        result.put("current_states", firstStringList(parseJson(snapshot.currentStatesJson)));
+        result.put("health_goals", firstStringList(parseJson(snapshot.healthGoalsJson)));
+        result.put("free_description", snapshot.freeDescription);
+        result.put("skipped", Boolean.TRUE.equals(snapshot.skipped));
+        return result;
+    }
+
+    private UserStateSnapshotResponse toStateSnapshotResponse(UserStateSnapshotEntity snapshot) {
+        UserStateSnapshotResponse response = new UserStateSnapshotResponse();
+        response.snapshotId = snapshot.id;
+        response.userId = snapshot.userId;
+        response.reportId = snapshot.reportId;
+        response.taskId = snapshot.taskId;
+        response.observationWindow = snapshot.observationWindow;
+        response.sleepStatus = snapshot.sleepStatus;
+        response.digestionStatus = snapshot.digestionStatus;
+        response.bowelStatus = snapshot.bowelStatus;
+        response.currentStates = firstStringList(parseJson(snapshot.currentStatesJson));
+        response.healthGoals = firstStringList(parseJson(snapshot.healthGoalsJson));
+        response.freeDescription = snapshot.freeDescription;
+        response.skipped = Boolean.TRUE.equals(snapshot.skipped);
+        response.createdAt = snapshot.createdAt;
+        response.updatedAt = snapshot.updatedAt;
+        return response;
+    }
+
+    private String writeJsonQuiet(Object value) {
+        try {
+            return objectMapper.writeValueAsString(value == null ? new ArrayList<Object>() : value);
+        } catch (Exception ex) {
+            return "[]";
+        }
+    }
+
     private static class QualityResult {
         public Double score;
         public String level = "UNKNOWN";
@@ -1327,6 +1491,9 @@ public class TongueAnalysisAppService {
         response.draftReport = parseJson(report.draftReportJson);
         response.riskDisclaimer = report.riskDisclaimer;
         response.structuredReport = toStructuredReport(report);
+        response.stateSnapshot = stateSnapshotRepository.findByReportId(report.id)
+                .map(this::toStateSnapshotResponse)
+                .orElse(null);
         QualityResult quality = calculateQuality(report, response.structuredReport);
         response.analysisQualityScore = quality.score;
         response.analysisQualityLevel = quality.level;

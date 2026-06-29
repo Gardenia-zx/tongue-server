@@ -13,6 +13,7 @@ import com.tongue.server.tongue.dto.ReportListItemResponse;
 import com.tongue.server.tongue.dto.ReportVersionResponse;
 import com.tongue.server.tongue.dto.TaskStatusResponse;
 import com.tongue.server.tongue.dto.TongueAnalyzeCreateResponse;
+import com.tongue.server.tongue.dto.UserStateSnapshotRequest;
 import com.tongue.server.tongue.service.TongueAnalysisAppService;
 import org.springframework.http.MediaType;
 import org.springframework.util.StringUtils;
@@ -70,6 +71,36 @@ public class TongueAnalyzeController {
         return ApiResponse.success(response, traceId);
     }
 
+    @PostMapping(
+            value = "/analyze/prepare",
+            consumes = MediaType.MULTIPART_FORM_DATA_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE
+    )
+    public ApiResponse<TongueAnalyzeCreateResponse> prepareAnalyze(
+            @RequestParam(value = "image", required = false) MultipartFile image,
+            @RequestParam(value = "conversationId", required = false) String conversationId,
+            @RequestParam(value = "threadId", required = false) String threadId,
+            @RequestParam(value = "clientTraceId", required = false) String clientTraceId,
+            @RequestParam(value = "userDescription", required = false) String userDescription,
+            @RequestParam(value = "user_description", required = false) String userDescriptionSnake
+    ) {
+        String traceId = StringUtils.hasText(clientTraceId)
+                ? clientTraceId.trim()
+                : "trace_" + UUID.randomUUID().toString();
+        if (image == null || image.isEmpty()) {
+            throw new BusinessException(ErrorCode.IMAGE_EMPTY, "请上传舌象图片", traceId);
+        }
+
+        TongueAnalyzeCreateResponse response = tongueAnalysisAppService.prepareAnalysis(
+                image,
+                conversationId,
+                threadId,
+                traceId,
+                StringUtils.hasText(userDescription) ? userDescription : userDescriptionSnake
+        );
+        return ApiResponse.success(response, traceId);
+    }
+
     @GetMapping("/tasks/{taskId}")
     public ApiResponse<TaskStatusResponse> task(@PathVariable Long taskId) {
         return ApiResponse.success(tongueAnalysisAppService.taskStatus(taskId));
@@ -78,6 +109,14 @@ public class TongueAnalyzeController {
     @PostMapping("/tasks/{taskId}/retry")
     public ApiResponse<TaskStatusResponse> retry(@PathVariable Long taskId) {
         return ApiResponse.success(tongueAnalysisAppService.retry(taskId));
+    }
+
+    @PostMapping("/tasks/{taskId}/state-snapshot")
+    public ApiResponse<TaskStatusResponse> stateSnapshot(
+            @PathVariable Long taskId,
+            @RequestBody UserStateSnapshotRequest request
+    ) {
+        return ApiResponse.success(tongueAnalysisAppService.submitStateSnapshot(taskId, request));
     }
 
     @GetMapping("/reports")

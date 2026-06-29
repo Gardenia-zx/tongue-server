@@ -34,6 +34,8 @@ public class ReportDetailResponse {
     public String riskDisclaimer;
     @JsonProperty("structured_report")
     public Object structuredReport;
+    @JsonProperty("state_snapshot")
+    public UserStateSnapshotResponse stateSnapshot;
     @JsonProperty("analysis_quality_score")
     public Double analysisQualityScore;
     @JsonProperty("analysis_quality_level")

@@ -221,9 +221,17 @@ public class HealthPlanService {
                 .map(this::toCheckinResponse)
                 .orElse(null);
         response.nextRetakeDate = nextRetakeDate(plan);
+        response.personalizationSignals = personalizationSignals(plan.sourceReportId);
         response.createdAt = plan.createdAt;
         response.updatedAt = plan.updatedAt;
         return response;
+    }
+
+    private List<String> personalizationSignals(Long reportId) {
+        TongueReportEntity report = reportRepository.findById(reportId).orElse(null);
+        if (report == null) return new ArrayList<String>();
+        JsonNode root = readTree(report.draftReportJson);
+        return toStringList(root.path("metadata").path("personalization_signals"));
     }
 
     private DailyCheckinResponse toCheckinResponse(UserDailyCheckinEntity entity) {

@@ -31,6 +31,8 @@ public class HealthPlanResponse {
     public DailyCheckinResponse todayCheckin;
     @JsonProperty("next_retake_date")
     public LocalDate nextRetakeDate;
+    @JsonProperty("personalization_signals")
+    public List<String> personalizationSignals;
     @JsonProperty("created_at")
     public LocalDateTime createdAt;
     @JsonProperty("updated_at")
