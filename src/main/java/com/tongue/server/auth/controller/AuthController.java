@@ -80,7 +80,7 @@ public class AuthController {
     }
 
     @GetMapping("/public/profile-avatars/{fileName:.+}")
-    public ResponseEntity<Resource> profileAvatar(@PathVariable String fileName) {
+    public ResponseEntity<Resource> profileAvatar(@PathVariable String fileName) throws Exception {
         ProfileAvatarStorageService.AvatarResource avatar = avatarStorageService.load(fileName);
         return ResponseEntity.ok()
                 .contentType(avatar.getMediaType())

@@ -64,7 +64,7 @@ public class ProfileAvatarStorageService {
         }
     }
 
-    public AvatarResource load(String fileName) {
+    public AvatarResource load(String fileName) throws Exception{
         Path path = resolve(fileName);
         if (!Files.isRegularFile(path)) {
             throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "头像文件不存在", null);

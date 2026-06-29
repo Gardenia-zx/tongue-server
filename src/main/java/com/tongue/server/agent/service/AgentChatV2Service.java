@@ -35,7 +35,10 @@ public class AgentChatV2Service {
 
     private static final Set<String> ALLOWED_REPORT_SECTIONS = new HashSet<String>(Arrays.asList(
             "feature_summary", "interpretation", "dietary_advice", "exercise_advice",
-            "lifestyle_advice", "risk_disclaimer", "rag_evidence_summary", "full_report"
+            "lifestyle_advice", "risk_disclaimer", "rag_evidence_summary", "full_report",
+            "recognition_evidence", "recognition_limits", "conditional_analysis",
+            "diet_plan", "sleep_plan", "exercise_plan", "three_day_observation",
+            "followup_questions"
     ));
 
     private final AgentChatTurnStore turnStore;
@@ -176,7 +179,15 @@ public class AgentChatV2Service {
     private Object sectionValue(String section, TongueReportEntity report, JsonNode draft, JsonNode evidence) {
         if ("feature_summary".equals(section)) return report.featureSummary;
         if ("interpretation".equals(section)) {
-            return nodeOrFallback(firstNode(draft, "interpretation", "general_interpretation", "summary"), report.summary);
+            return nodeOrFallback(firstNode(
+                    draft,
+                    "tongue_feature_explanation",
+                    "health_interpretation",
+                    "interpretation",
+                    "general_interpretation",
+                    "comprehensive_summary",
+                    "summary"
+            ), report.summary);
         }
         if ("dietary_advice".equals(section)) {
             return jsonValue(firstNode(draft, "dietary_advice", "dietaryAdvice", "diet_advice"));
@@ -189,6 +200,14 @@ public class AgentChatV2Service {
         }
         if ("risk_disclaimer".equals(section)) return report.riskDisclaimer;
         if ("rag_evidence_summary".equals(section)) return jsonValue(evidence);
+        if ("recognition_evidence".equals(section)) return jsonValue(firstNode(draft, "recognition_evidence"));
+        if ("recognition_limits".equals(section)) return jsonValue(firstNode(draft, "recognition_limits"));
+        if ("conditional_analysis".equals(section)) return jsonValue(firstNode(draft, "conditional_analysis"));
+        if ("diet_plan".equals(section)) return jsonValue(firstNode(draft, "diet_plan"));
+        if ("sleep_plan".equals(section)) return jsonValue(firstNode(draft, "sleep_plan"));
+        if ("exercise_plan".equals(section)) return jsonValue(firstNode(draft, "exercise_plan"));
+        if ("three_day_observation".equals(section)) return jsonValue(firstNode(draft, "three_day_observation"));
+        if ("followup_questions".equals(section)) return jsonValue(firstNode(draft, "followup_questions"));
         if ("full_report".equals(section)) return buildDisplayReport(report, draft, evidence);
         return null;
     }
@@ -202,13 +221,29 @@ public class AgentChatV2Service {
         putIfPresent(result, "summary", report.summary);
         putIfPresent(result, "feature_summary", report.featureSummary);
         putIfPresent(result, "interpretation",
-                nodeOrFallback(firstNode(draft, "interpretation", "general_interpretation", "summary"), report.summary));
+                nodeOrFallback(firstNode(
+                        draft,
+                        "tongue_feature_explanation",
+                        "health_interpretation",
+                        "interpretation",
+                        "general_interpretation",
+                        "comprehensive_summary",
+                        "summary"
+                ), report.summary));
         putIfPresent(result, "dietary_advice",
                 jsonValue(firstNode(draft, "dietary_advice", "dietaryAdvice", "diet_advice")));
         putIfPresent(result, "exercise_advice",
                 jsonValue(firstNode(draft, "exercise_advice", "exerciseAdvice")));
         putIfPresent(result, "lifestyle_advice",
                 jsonValue(firstNode(draft, "lifestyle_advice", "health_notes", "health_suggestions")));
+        putIfPresent(result, "recognition_evidence", jsonValue(firstNode(draft, "recognition_evidence")));
+        putIfPresent(result, "recognition_limits", jsonValue(firstNode(draft, "recognition_limits")));
+        putIfPresent(result, "conditional_analysis", jsonValue(firstNode(draft, "conditional_analysis")));
+        putIfPresent(result, "diet_plan", jsonValue(firstNode(draft, "diet_plan")));
+        putIfPresent(result, "sleep_plan", jsonValue(firstNode(draft, "sleep_plan")));
+        putIfPresent(result, "exercise_plan", jsonValue(firstNode(draft, "exercise_plan")));
+        putIfPresent(result, "three_day_observation", jsonValue(firstNode(draft, "three_day_observation")));
+        putIfPresent(result, "followup_questions", jsonValue(firstNode(draft, "followup_questions")));
         putIfPresent(result, "risk_disclaimer", report.riskDisclaimer);
         putIfPresent(result, "rag_evidence_summary", jsonValue(evidence));
         if (draft != null && !draft.isNull()) {
@@ -230,6 +265,10 @@ public class AgentChatV2Service {
             if (direct != null && !direct.isNull()) return direct;
             JsonNode metadata = root.path("metadata").get(key);
             if (metadata != null && !metadata.isNull()) return metadata;
+            JsonNode structuredAnswer = root.path("metadata").path("structured_answer").get(key);
+            if (structuredAnswer != null && !structuredAnswer.isNull()) return structuredAnswer;
+            JsonNode structuredReport = root.path("structured_report").get(key);
+            if (structuredReport != null && !structuredReport.isNull()) return structuredReport;
         }
         return null;
     }

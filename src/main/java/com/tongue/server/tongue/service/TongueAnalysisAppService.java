@@ -886,7 +886,12 @@ public class TongueAnalysisAppService {
         Map<String, Object> sections = safeMap(metadata.get("structured_sections"));
 
         Map<String, Object> result = new LinkedHashMap<String, Object>();
-        result.put("schema_version", firstText(structured.get("schema_version"), draft.get("schema_version"), "1.0"));
+        result.put("schema_version", firstText(
+                structured.get("schema_version"),
+                answer.get("schema_version"),
+                draft.get("schema_version"),
+                "1.0"
+        ));
         result.put("comprehensive_summary", firstText(
                 structured.get("comprehensive_summary"),
                 answer.get("comprehensive_summary"),
@@ -906,10 +911,61 @@ public class TongueAnalysisAppService {
         result.put("health_interpretation", firstText(
                 structured.get("health_interpretation"),
                 answer.get("health_interpretation"),
+                structured.get("tongue_feature_explanation"),
+                answer.get("tongue_feature_explanation"),
                 draft.get("health_interpretation"),
                 draft.get("interpretation"),
                 sections.get("general_interpretation"),
                 report.summary
+        ));
+        result.put("tongue_feature_explanation", firstText(
+                structured.get("tongue_feature_explanation"),
+                answer.get("tongue_feature_explanation"),
+                draft.get("tongue_feature_explanation"),
+                result.get("health_interpretation")
+        ));
+        result.put("recognition_evidence", firstListObject(
+                structured.get("recognition_evidence"),
+                answer.get("recognition_evidence"),
+                draft.get("recognition_evidence")
+        ));
+        result.put("recognition_limits", firstListObject(
+                structured.get("recognition_limits"),
+                answer.get("recognition_limits"),
+                draft.get("recognition_limits")
+        ));
+        result.put("dimension_values", firstListObject(
+                structured.get("dimension_values"),
+                answer.get("dimension_values"),
+                draft.get("dimension_values")
+        ));
+        result.put("conditional_analysis", firstListObject(
+                structured.get("conditional_analysis"),
+                answer.get("conditional_analysis"),
+                draft.get("conditional_analysis")
+        ));
+        result.put("diet_plan", safeMap(firstNonNull(
+                structured.get("diet_plan"),
+                firstNonNull(answer.get("diet_plan"), draft.get("diet_plan"))
+        )));
+        result.put("sleep_plan", safeMap(firstNonNull(
+                structured.get("sleep_plan"),
+                firstNonNull(answer.get("sleep_plan"), draft.get("sleep_plan"))
+        )));
+        result.put("exercise_plan", safeMap(firstNonNull(
+                structured.get("exercise_plan"),
+                firstNonNull(answer.get("exercise_plan"), draft.get("exercise_plan"))
+        )));
+        result.put("three_day_observation", firstStringList(
+                structured.get("three_day_observation"),
+                answer.get("three_day_observation"),
+                draft.get("three_day_observation"),
+                answer.get("observation_points")
+        ));
+        result.put("followup_questions", firstStringList(
+                structured.get("followup_questions"),
+                answer.get("followup_questions"),
+                draft.get("followup_questions")
         ));
         result.put("dietary_advice", firstStringList(
                 structured.get("dietary_advice"),
