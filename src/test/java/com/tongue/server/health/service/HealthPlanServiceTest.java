@@ -15,7 +15,8 @@ class HealthPlanServiceTest {
             null,
             null,
             null,
-            new ObjectMapper()
+            new ObjectMapper(),
+            null
     );
 
     @Test

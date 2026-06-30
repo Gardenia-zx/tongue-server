@@ -6,6 +6,7 @@ import com.tongue.server.agent.context.entity.AgentChatMessageEntity;
 import com.tongue.server.agent.context.entity.AgentChatTurnEntity;
 import com.tongue.server.agent.dto.AgentChatV2Request;
 import com.tongue.server.agent.dto.AgentChatV2Response;
+import com.tongue.server.agent.service.AgentResponseSanitizer.SanitizedAgentMessage;
 import com.tongue.server.agent.service.AgentChatTurnStore.AgentChatConflictException;
 import com.tongue.server.agent.service.AgentChatTurnStore.BeginTurnResult;
 import com.tongue.server.agent.service.AgentGatewayClientV2.AgentGatewayException;
@@ -13,6 +14,8 @@ import com.tongue.server.tongue.entity.TongueReportEntity;
 import com.tongue.server.tongue.entity.TongueReportVersionEntity;
 import com.tongue.server.tongue.repository.TongueReportRepository;
 import com.tongue.server.tongue.repository.TongueReportVersionRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -33,6 +36,8 @@ import java.util.UUID;
 @Service
 public class AgentChatV2Service {
 
+    private static final Logger log = LoggerFactory.getLogger(AgentChatV2Service.class);
+
     private static final Set<String> ALLOWED_REPORT_SECTIONS = new HashSet<String>(Arrays.asList(
             "feature_summary", "interpretation", "dietary_advice", "exercise_advice",
             "lifestyle_advice", "risk_disclaimer", "rag_evidence_summary", "full_report",
@@ -46,19 +51,22 @@ public class AgentChatV2Service {
     private final TongueReportRepository reportRepository;
     private final TongueReportVersionRepository versionRepository;
     private final ObjectMapper objectMapper;
+    private final AgentResponseSanitizer responseSanitizer;
 
     public AgentChatV2Service(
             AgentChatTurnStore turnStore,
             AgentGatewayClientV2 gatewayClient,
             TongueReportRepository reportRepository,
             TongueReportVersionRepository versionRepository,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            AgentResponseSanitizer responseSanitizer
     ) {
         this.turnStore = turnStore;
         this.gatewayClient = gatewayClient;
         this.reportRepository = reportRepository;
         this.versionRepository = versionRepository;
         this.objectMapper = objectMapper;
+        this.responseSanitizer = responseSanitizer;
     }
 
     public AgentChatV2Response chat(long userId, AgentChatV2Request request) {
@@ -80,11 +88,14 @@ public class AgentChatV2Service {
         if (!begin.isNewTurn()) return begin.getReplayResponse();
 
         AgentChatTurnEntity turn = begin.getTurn();
+        conversationId = begin.getConversation().getConversationId();
         Long boundReportId = turn.getBoundReportId();
         try {
             JsonNode activeReportRef = boundReportId == null
                     ? null : turnStore.loadTrustedReportRef(userId, boundReportId);
-            List<AgentChatMessageEntity> recentMessages = Collections.emptyList();
+            List<AgentChatMessageEntity> recentMessages = selectRecentMessages(
+                    userId, conversationId, bindingMode, turnId
+            );
 
             AgentGatewayClientV2.Invocation invocation = new AgentGatewayClientV2.Invocation();
             invocation.setUserId(userId);
@@ -113,6 +124,14 @@ public class AgentChatV2Service {
             AgentChatV2Response response = mapResponse(
                     request, conversationId, assistantMessageId, traceId, agentResponse
             );
+            log.info("agent_chat_response request_id={} turn_id={} conversation_id={} context_binding_mode={} content_length={} has_structured_content={} history_message_count={}",
+                    request.getRequestId(),
+                    turnId,
+                    conversationId,
+                    bindingMode,
+                    response.getAssistantMessage().getContent() == null ? 0 : response.getAssistantMessage().getContent().length(),
+                    response.getAssistantMessage().getStructuredContent() != null,
+                    recentMessages.size());
 
             Long responseReportId = response.getAssistantMessage().getReportRef() == null
                     ? null : response.getAssistantMessage().getReportRef().getReportId();
@@ -316,6 +335,45 @@ public class AgentChatV2Service {
         return result;
     }
 
+    private List<AgentChatMessageEntity> selectRecentMessages(
+            long userId,
+            String conversationId,
+            String bindingMode,
+            String currentTurnId
+    ) {
+        if ("NONE".equals(bindingMode)) {
+            return Collections.emptyList();
+        }
+        int maxMessages = "AUTO".equals(bindingMode) ? 6 : 8;
+        int tokenBudget = "AUTO".equals(bindingMode)
+                ? 4000
+                : "LAST_ANSWER".equals(bindingMode) ? 5000 : 6000;
+        List<AgentChatMessageEntity> rows = turnStore.recentMessages(userId, conversationId);
+        List<AgentChatMessageEntity> selected = new ArrayList<AgentChatMessageEntity>();
+        int used = 0;
+        for (int i = rows.size() - 1; i >= 0; i--) {
+            AgentChatMessageEntity item = rows.get(i);
+            if (currentTurnId.equals(item.getTurnId())) {
+                continue;
+            }
+            int cost = estimateTokens(item.getContent());
+            if (!selected.isEmpty() && (selected.size() >= maxMessages || used + cost > tokenBudget)) {
+                break;
+            }
+            selected.add(item);
+            used += cost;
+        }
+        Collections.reverse(selected);
+        return selected;
+    }
+
+    private int estimateTokens(String content) {
+        if (content == null || content.isEmpty()) {
+            return 0;
+        }
+        return Math.max(1, content.length());
+    }
+
     private void validateRequest(AgentChatV2Request request) {
         if (request.getMessage() == null || request.getMessage().getContent() == null
                 || request.getMessage().getContent().trim().isEmpty()) {
@@ -352,8 +410,12 @@ public class AgentChatV2Service {
 
     private AgentChatV2Response mapResponse(AgentChatV2Request request, String conversationId, String assistantMessageId, String traceId, JsonNode source) {
         JsonNode sourceMessage = source.path("message");
-        String content = sourceMessage.path("content").asText("").trim();
-        if (content.isEmpty()) throw new AgentChatConflictException("INVALID_AGENT_RESPONSE", "Agent 返回了空消息");
+        SanitizedAgentMessage sanitized = responseSanitizer.sanitize(sourceMessage);
+        String content = sanitized.getContent();
+        if (sanitized.isStructuredContentInvalid()) {
+            log.warn("structured_content_invalid fallback_to_text request_id={} turn_id={} conversation_id={}",
+                    request.getRequestId(), source.path("turn_id").asText(), conversationId);
+        }
 
         AgentChatV2Response response = new AgentChatV2Response();
         response.setStatus(source.path("status").asText("COMPLETED"));
@@ -368,8 +430,8 @@ public class AgentChatV2Service {
         message.setRole("assistant");
         message.setContentType(sourceMessage.path("content_type").asText("text"));
         message.setContent(content);
-        if (sourceMessage.has("structured_content") && !sourceMessage.get("structured_content").isNull()) {
-            message.setStructuredContent(sourceMessage.get("structured_content"));
+        if (sanitized.getStructuredContent() != null && !sanitized.getStructuredContent().isNull()) {
+            message.setStructuredContent(sanitized.getStructuredContent());
         }
         JsonNode snapshot = source.path("state_snapshot");
         JsonNode reportContext = snapshot.path("report_context");

@@ -137,6 +137,24 @@ public class TongueAgentClient {
         }
     }
 
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> reviewHealthPlan(Map<String, Object> request) {
+        try {
+            return restTemplate.postForObject(
+                    buildHealthPlanReviewUrl(),
+                    request,
+                    Map.class
+            );
+        } catch (Exception ex) {
+            throw new BusinessException(
+                    ErrorCode.AGENT_CALL_FAILED,
+                    "调用 Python Agent 健康计划评估失败",
+                    null,
+                    ex
+            );
+        }
+    }
+
     private List<ScheduledFuture<?>> scheduleAnalysisProgress(AgentRunRequest request) {
         if (!isDedicatedAnalysisRequest(request) || request.getTaskId() == null) {
             return Collections.emptyList();
@@ -254,6 +272,10 @@ public class TongueAgentClient {
 
     private String buildCompareUrl() {
         return buildUrl(agentProperties.getComparePath(), "/api/v1/agent/report-compare");
+    }
+
+    private String buildHealthPlanReviewUrl() {
+        return buildUrl(null, "/api/v1/agent/health-plan/review");
     }
 
     private String buildUrl(String configuredPath, String defaultPath) {

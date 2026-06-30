@@ -28,6 +28,7 @@ import java.util.Optional;
 
 @Component
 public class AgentChatTurnStore {
+    private static final int DEFAULT_THREAD_EPOCH = 1;
 
     private final AgentChatConversationRepository conversationRepository;
     private final AgentChatTurnRepository turnRepository;
@@ -66,10 +67,10 @@ public class AgentChatTurnStore {
             return replayOrReject(existing.get(), requestHash);
         }
 
-        AgentChatConversationEntity conversation = conversationRepository
-                .findByUserIdAndConversationId(userId, conversationId)
-                .orElseGet(() -> newConversation(userId, conversationId, request.getThreadId()));
-        conversation.setThreadId(request.getThreadId());
+        AgentChatConversationEntity conversation = resolveConversation(userId, conversationId, request.getThreadId());
+        if (isBlank(conversation.getThreadId())) {
+            conversation.setThreadId(request.getThreadId());
+        }
 
         Long resolvedReportId = resolveBoundReportId(
                 userId,
@@ -84,11 +85,12 @@ public class AgentChatTurnStore {
         }
         conversation.setUpdatedAt(LocalDateTime.now());
         conversationRepository.save(conversation);
+        String canonicalConversationId = conversation.getConversationId();
 
         LocalDateTime now = LocalDateTime.now();
         AgentChatTurnEntity turn = new AgentChatTurnEntity();
         turn.setTurnId(turnId);
-        turn.setConversationId(conversationId);
+        turn.setConversationId(canonicalConversationId);
         turn.setUserId(userId);
         turn.setRequestId(request.getRequestId());
         turn.setRequestHash(requestHash);
@@ -113,14 +115,14 @@ public class AgentChatTurnStore {
             AgentChatMessageEntity userMessage = new AgentChatMessageEntity();
             userMessage.setMessageId(request.getClientMessageId());
             userMessage.setTurnId(turnId);
-            userMessage.setConversationId(conversationId);
+            userMessage.setConversationId(canonicalConversationId);
             userMessage.setUserId(userId);
             userMessage.setRole("USER");
             userMessage.setContentType("text");
             userMessage.setContent(request.getMessage().getContent());
             userMessage.setReportId(null);
             userMessage.setStatus("COMPLETED");
-            userMessage.setSequenceNo(messageRepository.countByUserIdAndConversationId(userId, conversationId) + 1L);
+            userMessage.setSequenceNo(messageRepository.countByUserIdAndConversationId(userId, canonicalConversationId) + 1L);
             userMessage.setCreatedAt(now);
             userMessage.setUpdatedAt(now);
             messageRepository.save(userMessage);
@@ -273,11 +275,31 @@ public class AgentChatTurnStore {
         conversation.setConversationId(conversationId);
         conversation.setUserId(userId);
         conversation.setThreadId(threadId);
-        conversation.setThreadEpoch(1);
+        conversation.setThreadEpoch(DEFAULT_THREAD_EPOCH);
         conversation.setStatus("ACTIVE");
         conversation.setCreatedAt(now);
         conversation.setUpdatedAt(now);
         return conversation;
+    }
+
+    private AgentChatConversationEntity resolveConversation(long userId, String conversationId, String threadId) {
+        Optional<AgentChatConversationEntity> byConversation = conversationRepository
+                .findByUserIdAndConversationId(userId, conversationId);
+        if (byConversation.isPresent()) {
+            return byConversation.get();
+        }
+        if (!isBlank(threadId)) {
+            Optional<AgentChatConversationEntity> byThread = conversationRepository
+                    .findByUserIdAndThreadIdAndThreadEpoch(userId, threadId, DEFAULT_THREAD_EPOCH);
+            if (byThread.isPresent()) {
+                return byThread.get();
+            }
+        }
+        return newConversation(userId, conversationId, threadId);
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty();
     }
 
     @Transactional(readOnly = true)
@@ -355,10 +377,10 @@ public class AgentChatTurnStore {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void bindActiveReport(long userId, String conversationId, String threadId, long reportId) {
         loadTrustedReportRef(userId, reportId);
-        AgentChatConversationEntity conversation = conversationRepository
-                .findByUserIdAndConversationId(userId, conversationId)
-                .orElseGet(() -> newConversation(userId, conversationId, threadId));
-        conversation.setThreadId(threadId);
+        AgentChatConversationEntity conversation = resolveConversation(userId, conversationId, threadId);
+        if (isBlank(conversation.getThreadId())) {
+            conversation.setThreadId(threadId);
+        }
         conversation.setActiveReportId(reportId);
         conversation.setUpdatedAt(LocalDateTime.now());
         conversationRepository.save(conversation);

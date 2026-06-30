@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tongue.server.auth.AuthContext;
+import com.tongue.server.client.TongueAgentClient;
 import com.tongue.server.common.BusinessException;
 import com.tongue.server.common.ErrorCode;
 import com.tongue.server.health.dto.CheckinSummaryResponse;
@@ -13,6 +14,7 @@ import com.tongue.server.health.dto.DailyCheckinResponse;
 import com.tongue.server.health.dto.HealthPlanDayContent;
 import com.tongue.server.health.dto.HealthPlanDraftUpdateRequest;
 import com.tongue.server.health.dto.HealthPlanResponse;
+import com.tongue.server.health.dto.HealthPlanReviewResponse;
 import com.tongue.server.health.entity.UserDailyCheckinEntity;
 import com.tongue.server.health.entity.UserHealthPlanEntity;
 import com.tongue.server.health.repository.UserDailyCheckinRepository;
@@ -51,19 +53,22 @@ public class HealthPlanService {
     private final UserDailyCheckinRepository checkinRepository;
     private final NotificationService notificationService;
     private final ObjectMapper objectMapper;
+    private final TongueAgentClient tongueAgentClient;
 
     public HealthPlanService(
             TongueReportRepository reportRepository,
             UserHealthPlanRepository planRepository,
             UserDailyCheckinRepository checkinRepository,
             NotificationService notificationService,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            TongueAgentClient tongueAgentClient
     ) {
         this.reportRepository = reportRepository;
         this.planRepository = planRepository;
         this.checkinRepository = checkinRepository;
         this.notificationService = notificationService;
         this.objectMapper = objectMapper;
+        this.tongueAgentClient = tongueAgentClient;
     }
 
     @Transactional(readOnly = true)
@@ -131,6 +136,54 @@ public class HealthPlanService {
         List<HealthPlanDayContent> days = sanitizeDays(request.days, plan.startDate);
         plan.planContentJson = writeJson(days);
         plan.schemaVersion = StringUtils.hasText(request.schemaVersion) ? request.schemaVersion.trim() : "2.0";
+        return toPlanResponse(planRepository.save(plan));
+    }
+
+    @Transactional(readOnly = true)
+    public HealthPlanReviewResponse reviewDraft(Long planId) {
+        Long userId = AuthContext.requireUserId();
+        UserHealthPlanEntity plan = planRepository.findByIdAndUserId(planId, userId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "健康计划不存在", null));
+        requireDraft(plan);
+
+        try {
+            return toReviewResponse(tongueAgentClient.reviewHealthPlan(buildAgentPlanRequest(plan, "review")));
+        } catch (BusinessException ex) {
+            HealthPlanReviewResponse response = new HealthPlanReviewResponse();
+            response.status = "FAILED";
+            response.summary = "AI 评估暂时失败，请稍后重试，或先继续手动检查计划。";
+            response.recommendedAction = "GENERATE_DETAILED";
+            return response;
+        }
+    }
+
+    @Transactional
+    public HealthPlanResponse generateDetailed(Long planId) {
+        Long userId = AuthContext.requireUserId();
+        UserHealthPlanEntity plan = planRepository.findByIdAndUserId(planId, userId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "健康计划不存在", null));
+        requireDraft(plan);
+
+        Map<String, Object> response = tongueAgentClient.reviewHealthPlan(buildAgentPlanRequest(plan, "generate_detailed"));
+        if ("FAILED".equals(text(response.get("status")))) {
+            String summary = text(response.get("summary"));
+            throw new BusinessException(
+                    ErrorCode.AGENT_CALL_FAILED,
+                    StringUtils.hasText(summary) ? summary : "AI 生成具体计划失败",
+                    null
+            );
+        }
+        Object daysValue = response.get("days");
+        List<HealthPlanDayContent> days;
+        try {
+            days = objectMapper.convertValue(daysValue, new TypeReference<List<HealthPlanDayContent>>() {});
+        } catch (IllegalArgumentException ex) {
+            throw new BusinessException(ErrorCode.AGENT_CALL_FAILED, "AI 未返回有效的 7 天计划", null, ex);
+        }
+        List<HealthPlanDayContent> sanitized = sanitizeDays(days, plan.startDate);
+        validateForActivation(sanitized);
+        plan.planContentJson = writeJson(sanitized);
+        plan.generationMode = "AI_DETAILED_DRAFT";
         return toPlanResponse(planRepository.save(plan));
     }
 
@@ -402,6 +455,54 @@ public class HealthPlanService {
         if (!DRAFT.equals(plan.status)) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "只有计划草稿可以编辑或启用", null);
         }
+    }
+
+    private Map<String, Object> buildAgentPlanRequest(UserHealthPlanEntity plan, String mode) {
+        TongueReportEntity report = reportRepository.findById(plan.sourceReportId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "来源报告不存在", null));
+        JsonNode draft = readTree(report.draftReportJson);
+        Map<String, Object> request = new LinkedHashMap<String, Object>();
+        request.put("mode", mode);
+        request.put("plan_id", plan.id);
+        request.put("report_id", report.id);
+        request.put("draft_report", readObject(report.draftReportJson));
+        request.put("state_snapshot", toMap(draft.path("metadata").path("state_snapshot")));
+        request.put("personalization_signals", personalizationSignals(report.id));
+        request.put("plan_days", readPlanDays(plan));
+        return request;
+    }
+
+    private HealthPlanReviewResponse toReviewResponse(Map<String, Object> source) {
+        if (source == null) source = new LinkedHashMap<String, Object>();
+        HealthPlanReviewResponse response = new HealthPlanReviewResponse();
+        String status = text(source.get("status"));
+        response.status = "REASONABLE".equals(status) || "NEEDS_IMPROVEMENT".equals(status) ? status : "FAILED";
+        response.summary = cleanText(text(source.get("summary")), 500);
+        response.issues = objectStringList(source.get("issues"), 8, 160);
+        response.suggestions = objectStringList(source.get("suggestions"), 8, 180);
+        String action = text(source.get("recommended_action"));
+        response.recommendedAction = "ACTIVATE".equals(action) || "GENERATE_DETAILED".equals(action)
+                ? action
+                : "REASONABLE".equals(response.status) ? "ACTIVATE" : "GENERATE_DETAILED";
+        if (!StringUtils.hasText(response.summary)) {
+            response.summary = "FAILED".equals(response.status) ? "AI 评估暂时失败。" : "AI 已完成计划评估。";
+        }
+        return response;
+    }
+
+    private List<String> objectStringList(Object value, int maxItems, int maxLength) {
+        List<String> result = new ArrayList<String>();
+        if (!(value instanceof List)) return result;
+        for (Object item : (List<?>) value) {
+            String cleaned = cleanText(item == null ? null : String.valueOf(item), maxLength);
+            if (StringUtils.hasText(cleaned) && !result.contains(cleaned)) result.add(cleaned);
+            if (result.size() >= maxItems) break;
+        }
+        return result;
+    }
+
+    private String text(Object value) {
+        return value == null ? "" : String.valueOf(value);
     }
 
     private void closePlansByStatus(Long userId, String status) {

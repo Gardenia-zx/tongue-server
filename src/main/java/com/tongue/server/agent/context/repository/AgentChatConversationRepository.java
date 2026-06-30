@@ -9,4 +9,10 @@ import java.util.Optional;
 @Repository("agentChatV2ConversationRepository")
 public interface AgentChatConversationRepository extends JpaRepository<AgentChatConversationEntity, Long> {
     Optional<AgentChatConversationEntity> findByUserIdAndConversationId(Long userId, String conversationId);
+
+    Optional<AgentChatConversationEntity> findByUserIdAndThreadIdAndThreadEpoch(
+            Long userId,
+            String threadId,
+            Integer threadEpoch
+    );
 }

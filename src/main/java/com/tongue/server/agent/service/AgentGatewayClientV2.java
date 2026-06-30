@@ -85,11 +85,16 @@ public class AgentGatewayClientV2 {
 
         String contextMode = invocation.getContextMode();
         boolean mysqlRecovery = "mysql_recovery".equals(contextMode);
-        if (mysqlRecovery || invocation.getActiveReportRef() != null || invocation.getLoadedReportSections() != null) {
+        if (mysqlRecovery
+                || invocation.getActiveReportRef() != null
+                || invocation.getLoadedReportSections() != null
+                || (invocation.getRecentMessages() != null && !invocation.getRecentMessages().isEmpty())) {
             ObjectNode contextBundle = payload.putObject("context_bundle");
             if (mysqlRecovery) {
                 contextBundle.put("mode", "mysql_recovery");
                 contextBundle.put("conversation_id", invocation.getConversationId());
+            }
+            if (mysqlRecovery || (invocation.getRecentMessages() != null && !invocation.getRecentMessages().isEmpty())) {
                 contextBundle.set("recent_messages", toRecentMessages(invocation.getRecentMessages()));
             }
             if (invocation.getActiveReportRef() != null) {
