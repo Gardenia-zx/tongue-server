@@ -19,7 +19,7 @@ public class UserHealthPlanEntity extends BaseEntity {
     public Long sourceReportId;
 
     @Column(nullable = false, length = 16)
-    public String status = "ACTIVE";
+    public String status = "DRAFT";
 
     @Column(nullable = false)
     public LocalDate startDate;
@@ -38,6 +38,17 @@ public class UserHealthPlanEntity extends BaseEntity {
 
     @Column(columnDefinition = "json")
     public String observationItemsJson;
+
+    @Column(columnDefinition = "json")
+    public String planContentJson;
+
+    @Column(length = 16)
+    public String schemaVersion = "2.0";
+
+    @Column(length = 24)
+    public String generationMode = "RECOMMENDED_DRAFT";
+
+    public LocalDateTime activatedAt;
 
     public LocalDateTime closedAt;
 }

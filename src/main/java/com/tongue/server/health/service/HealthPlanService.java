@@ -10,6 +10,8 @@ import com.tongue.server.common.ErrorCode;
 import com.tongue.server.health.dto.CheckinSummaryResponse;
 import com.tongue.server.health.dto.DailyCheckinRequest;
 import com.tongue.server.health.dto.DailyCheckinResponse;
+import com.tongue.server.health.dto.HealthPlanDayContent;
+import com.tongue.server.health.dto.HealthPlanDraftUpdateRequest;
 import com.tongue.server.health.dto.HealthPlanResponse;
 import com.tongue.server.health.entity.UserDailyCheckinEntity;
 import com.tongue.server.health.entity.UserHealthPlanEntity;
@@ -25,17 +27,24 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Service
 public class HealthPlanService {
 
+    private static final String DRAFT = "DRAFT";
     private static final String ACTIVE = "ACTIVE";
     private static final String CLOSED = "CLOSED";
     private static final String RETAKE_NOTIFICATION_TYPE = "HEALTH_PLAN_RETAKE";
+    private static final int PLAN_DAYS = 7;
 
     private final TongueReportRepository reportRepository;
     private final UserHealthPlanRepository planRepository;
@@ -64,30 +73,87 @@ public class HealthPlanService {
         return plan == null ? null : toPlanResponse(plan);
     }
 
+    @Transactional(readOnly = true)
+    public HealthPlanResponse detail(Long planId) {
+        Long userId = AuthContext.requireUserId();
+        UserHealthPlanEntity plan = planRepository.findByIdAndUserId(planId, userId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "健康计划不存在", null));
+        return toPlanResponse(plan);
+    }
+
     @Transactional
-    public HealthPlanResponse createFromReport(Long reportId) {
+    public HealthPlanResponse createDraftFromReport(Long reportId) {
         Long userId = AuthContext.requireUserId();
         TongueReportEntity report = reportRepository.findByIdAndUserIdAndDeletedAtIsNull(reportId, userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "报告不存在或无权访问", null));
-        PlanPayload payload = extractPlan(report);
-        if (!payload.isComplete()) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "这份报告缺少可执行的饮食、睡眠或运动计划，无法生成健康计划", null);
+
+        UserHealthPlanEntity existingDraft = planRepository
+                .findFirstByUserIdAndSourceReportIdAndStatusOrderByCreatedAtDesc(userId, reportId, DRAFT)
+                .orElse(null);
+        if (existingDraft != null) {
+            return toPlanResponse(existingDraft);
         }
 
-        closeActivePlans(userId);
-        notificationService.markUnreadTypeRead(userId, RETAKE_NOTIFICATION_TYPE);
+        PlanPayload payload = extractPlan(report);
+        if (!payload.isComplete()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "这份报告缺少饮食、睡眠或运动建议，无法生成计划草稿", null);
+        }
+
+        closePlansByStatus(userId, DRAFT);
 
         LocalDate today = LocalDate.now();
         UserHealthPlanEntity plan = new UserHealthPlanEntity();
         plan.userId = userId;
         plan.sourceReportId = report.id;
-        plan.status = ACTIVE;
+        plan.status = DRAFT;
         plan.startDate = today;
-        plan.endDate = today.plusDays(6);
+        plan.endDate = today.plusDays(PLAN_DAYS - 1L);
         plan.dietGoalJson = writeJson(payload.dietGoal);
         plan.sleepGoalJson = writeJson(payload.sleepGoal);
         plan.exerciseGoalJson = writeJson(payload.exerciseGoal);
         plan.observationItemsJson = writeJson(payload.observationItems);
+        plan.schemaVersion = "2.0";
+        plan.generationMode = "RECOMMENDED_DRAFT";
+        plan.planContentJson = writeJson(buildDraftDays(payload, today));
+        return toPlanResponse(planRepository.save(plan));
+    }
+
+    @Transactional
+    public HealthPlanResponse updateDraft(Long planId, HealthPlanDraftUpdateRequest request) {
+        Long userId = AuthContext.requireUserId();
+        UserHealthPlanEntity plan = planRepository.findByIdAndUserId(planId, userId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "健康计划不存在", null));
+        requireDraft(plan);
+        if (request == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "计划内容不能为空", null);
+        }
+
+        List<HealthPlanDayContent> days = sanitizeDays(request.days, plan.startDate);
+        plan.planContentJson = writeJson(days);
+        plan.schemaVersion = StringUtils.hasText(request.schemaVersion) ? request.schemaVersion.trim() : "2.0";
+        return toPlanResponse(planRepository.save(plan));
+    }
+
+    @Transactional
+    public HealthPlanResponse activate(Long planId) {
+        Long userId = AuthContext.requireUserId();
+        UserHealthPlanEntity plan = planRepository.findByIdAndUserId(planId, userId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "健康计划不存在", null));
+        requireDraft(plan);
+
+        LocalDate today = LocalDate.now();
+        List<HealthPlanDayContent> days = sanitizeDays(readPlanDays(plan), today);
+        validateForActivation(days);
+
+        closePlansByStatus(userId, ACTIVE);
+        notificationService.markUnreadTypeRead(userId, RETAKE_NOTIFICATION_TYPE);
+
+        plan.status = ACTIVE;
+        plan.startDate = today;
+        plan.endDate = today.plusDays(PLAN_DAYS - 1L);
+        plan.planContentJson = writeJson(days);
+        plan.activatedAt = LocalDateTime.now();
+        plan.closedAt = null;
         plan = planRepository.save(plan);
 
         createRetakeNotification(plan, 3);
@@ -100,9 +166,12 @@ public class HealthPlanService {
         Long userId = AuthContext.requireUserId();
         UserHealthPlanEntity plan = planRepository.findByIdAndUserId(planId, userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "健康计划不存在", null));
+        boolean wasActive = ACTIVE.equals(plan.status);
         plan.status = CLOSED;
         plan.closedAt = LocalDateTime.now();
-        notificationService.markUnreadTypeRead(userId, RETAKE_NOTIFICATION_TYPE);
+        if (wasActive) {
+            notificationService.markUnreadTypeRead(userId, RETAKE_NOTIFICATION_TYPE);
+        }
         return toPlanResponse(planRepository.save(plan));
     }
 
@@ -191,11 +260,155 @@ public class HealthPlanService {
         return payload;
     }
 
-    private void closeActivePlans(Long userId) {
-        for (UserHealthPlanEntity active : planRepository.findByUserIdAndStatus(userId, ACTIVE)) {
-            active.status = CLOSED;
-            active.closedAt = LocalDateTime.now();
-            planRepository.save(active);
+    private List<HealthPlanDayContent> buildDraftDays(PlanPayload payload, LocalDate startDate) {
+        List<HealthPlanDayContent> days = new ArrayList<HealthPlanDayContent>();
+        List<List<String>> breakfasts = Arrays.asList(
+                Arrays.asList("小米粥一碗", "水煮鸡蛋一个", "焯青菜一份"),
+                Arrays.asList("燕麦粥一碗", "鸡蛋一个", "黄瓜或番茄一份"),
+                Arrays.asList("全麦面包两片", "无糖豆浆一杯", "熟蔬菜一份"),
+                Arrays.asList("南瓜粥一碗", "蒸蛋一份", "清炒青菜一份"),
+                Arrays.asList("馒头一个", "鸡蛋一个", "无糖豆浆一杯"),
+                Arrays.asList("杂粮粥一碗", "豆腐或鸡蛋一份", "青菜一份"),
+                Arrays.asList("燕麦或小米粥一碗", "鸡蛋一个", "水果一小份")
+        );
+        List<List<String>> lunches = Arrays.asList(
+                Arrays.asList("米饭一拳大小", "清炒小白菜一份", "鸡肉或豆腐一份"),
+                Arrays.asList("米饭一拳大小", "西兰花或菜花一份", "鱼肉或豆腐一份"),
+                Arrays.asList("杂粮饭一拳大小", "芹菜胡萝卜一份", "瘦肉或鸡蛋一份"),
+                Arrays.asList("米饭一拳大小", "菠菜或油麦菜一份", "鸡胸肉或豆制品一份"),
+                Arrays.asList("面条一碗", "青菜一份", "鸡蛋或瘦肉一份"),
+                Arrays.asList("米饭一拳大小", "冬瓜或南瓜一份", "鱼肉或豆腐一份"),
+                Arrays.asList("杂粮饭一拳大小", "两种熟蔬菜", "鸡肉、鱼肉或豆腐一份")
+        );
+        List<List<String>> dinners = Arrays.asList(
+                Arrays.asList("杂粮粥一小碗", "番茄炒蛋一份", "菠菜一份"),
+                Arrays.asList("南瓜粥一小碗", "蒸蛋一份", "清炒西兰花一份"),
+                Arrays.asList("面条一小碗", "青菜一份", "豆腐一份"),
+                Arrays.asList("小米粥一小碗", "清蒸鱼或豆腐一份", "熟蔬菜一份"),
+                Arrays.asList("米饭半拳到一拳", "番茄或冬瓜一份", "鸡蛋一份"),
+                Arrays.asList("山药粥一小碗", "豆腐一份", "清炒青菜一份"),
+                Arrays.asList("杂粮粥一小碗", "蒸蛋或豆腐一份", "熟蔬菜一份")
+        );
+        String[] activities = {"晚饭后快走", "八段锦加轻松散步", "快走与慢走交替", "舒缓拉伸加散步", "室内步行或骑行", "低强度全身活动", "轻松快走"};
+        int[] durations = {20, 25, 24, 20, 25, 20, 30};
+
+        for (int index = 0; index < PLAN_DAYS; index++) {
+            HealthPlanDayContent day = new HealthPlanDayContent();
+            day.dayIndex = index + 1;
+            day.date = startDate.plusDays(index);
+            day.diet.breakfast = new ArrayList<String>(breakfasts.get(index));
+            day.diet.lunch = new ArrayList<String>(lunches.get(index));
+            day.diet.dinner = new ArrayList<String>(dinners.get(index));
+            day.diet.avoid = new ArrayList<String>(Arrays.asList("夜宵", "油炸食品", "大量冰饮"));
+            day.exercise.activity = activities[index];
+            day.exercise.durationMinutes = durations[index];
+            day.exercise.intensity = index == 6 ? "中等强度，以可以正常说话为准" : "低到中等强度，不追求大汗";
+            day.exercise.warmup = new ArrayList<String>(Arrays.asList("原地慢走或踏步 2 分钟", "活动肩颈、髋部和踝关节"));
+            day.exercise.cooldown = new ArrayList<String>(Arrays.asList("慢走 2 分钟", "小腿和大腿后侧各拉伸 30 秒"));
+            day.sleep.targetBedtime = "23:30";
+            day.sleep.targetWakeTime = "07:30";
+            day.sleep.actions = mergePlanActions(
+                    stringListFromMap(payload.sleepGoal, "actions"),
+                    Arrays.asList("睡前 30 分钟减少手机使用", "晚餐后避免大量咖啡因和酒精"),
+                    3
+            );
+            day.observations = payload.observationItems.isEmpty()
+                    ? new ArrayList<String>(Arrays.asList("饭后是否腹胀", "运动后疲劳程度", "入睡所需时间"))
+                    : new ArrayList<String>(payload.observationItems);
+            days.add(day);
+        }
+        return days;
+    }
+
+    private List<String> mergePlanActions(List<String> primary, List<String> fallback, int limit) {
+        List<String> result = new ArrayList<String>();
+        for (String item : primary) {
+            addUnique(result, item, limit);
+        }
+        for (String item : fallback) {
+            addUnique(result, item, limit);
+        }
+        return result;
+    }
+
+    private void addUnique(List<String> target, String value, int limit) {
+        String cleaned = cleanText(value, 120);
+        if (!StringUtils.hasText(cleaned) || target.contains(cleaned) || target.size() >= limit) return;
+        target.add(cleaned);
+    }
+
+    private List<HealthPlanDayContent> sanitizeDays(List<HealthPlanDayContent> input, LocalDate startDate) {
+        if (input == null || input.size() != PLAN_DAYS) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "健康计划必须包含完整的 7 天安排", null);
+        }
+
+        List<HealthPlanDayContent> days = new ArrayList<HealthPlanDayContent>();
+        Set<Integer> indexes = new HashSet<Integer>();
+        for (HealthPlanDayContent raw : input) {
+            if (raw == null || raw.dayIndex == null || raw.dayIndex < 1 || raw.dayIndex > PLAN_DAYS || !indexes.add(raw.dayIndex)) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "计划日期序号不完整或重复", null);
+            }
+            HealthPlanDayContent day = new HealthPlanDayContent();
+            day.dayIndex = raw.dayIndex;
+            day.date = startDate.plusDays(raw.dayIndex - 1L);
+            HealthPlanDayContent.DietContent diet = raw.diet == null ? new HealthPlanDayContent.DietContent() : raw.diet;
+            day.diet.breakfast = cleanList(diet.breakfast, 12, 80);
+            day.diet.lunch = cleanList(diet.lunch, 12, 80);
+            day.diet.dinner = cleanList(diet.dinner, 12, 80);
+            day.diet.avoid = cleanList(diet.avoid, 12, 80);
+
+            HealthPlanDayContent.ExerciseContent exercise = raw.exercise == null ? new HealthPlanDayContent.ExerciseContent() : raw.exercise;
+            day.exercise.activity = cleanText(exercise.activity, 80);
+            day.exercise.durationMinutes = exercise.durationMinutes;
+            day.exercise.intensity = cleanText(exercise.intensity, 120);
+            day.exercise.warmup = cleanList(exercise.warmup, 8, 100);
+            day.exercise.cooldown = cleanList(exercise.cooldown, 8, 100);
+
+            HealthPlanDayContent.SleepContent sleep = raw.sleep == null ? new HealthPlanDayContent.SleepContent() : raw.sleep;
+            day.sleep.targetBedtime = cleanText(sleep.targetBedtime, 16);
+            day.sleep.targetWakeTime = cleanText(sleep.targetWakeTime, 16);
+            day.sleep.actions = cleanList(sleep.actions, 10, 120);
+            day.observations = cleanList(raw.observations, 12, 120);
+            days.add(day);
+        }
+        days.sort(Comparator.comparingInt(item -> item.dayIndex));
+        return days;
+    }
+
+    private void validateForActivation(List<HealthPlanDayContent> days) {
+        for (HealthPlanDayContent day : days) {
+            int index = day.dayIndex == null ? 0 : day.dayIndex;
+            if (day.diet.breakfast.isEmpty() || day.diet.lunch.isEmpty() || day.diet.dinner.isEmpty()) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "第 " + index + " 天的早餐、午餐和晚餐都需要至少保留一项", null);
+            }
+            if (!StringUtils.hasText(day.exercise.activity)
+                    || day.exercise.durationMinutes == null
+                    || day.exercise.durationMinutes < 5
+                    || day.exercise.durationMinutes > 180) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "第 " + index + " 天需要填写有效的运动项目和 5 到 180 分钟的时长", null);
+            }
+            if (!StringUtils.hasText(day.exercise.intensity)) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "第 " + index + " 天需要填写运动强度", null);
+            }
+            if (!StringUtils.hasText(day.sleep.targetBedtime)
+                    || !StringUtils.hasText(day.sleep.targetWakeTime)
+                    || day.sleep.actions.isEmpty()) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "第 " + index + " 天需要填写睡眠时间和至少一项睡前行动", null);
+            }
+        }
+    }
+
+    private void requireDraft(UserHealthPlanEntity plan) {
+        if (!DRAFT.equals(plan.status)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "只有计划草稿可以编辑或启用", null);
+        }
+    }
+
+    private void closePlansByStatus(Long userId, String status) {
+        for (UserHealthPlanEntity plan : planRepository.findByUserIdAndStatus(userId, status)) {
+            plan.status = CLOSED;
+            plan.closedAt = LocalDateTime.now();
+            planRepository.save(plan);
         }
     }
 
@@ -223,18 +436,89 @@ public class HealthPlanService {
         response.status = plan.status;
         response.startDate = plan.startDate;
         response.endDate = plan.endDate;
-        response.dietGoal = readMap(plan.dietGoalJson);
-        response.sleepGoal = readMap(plan.sleepGoalJson);
-        response.exerciseGoal = readMap(plan.exerciseGoalJson);
-        response.observationItems = readStringList(plan.observationItemsJson);
-        response.todayCheckin = checkinRepository.findByUserIdAndCheckinDate(plan.userId, LocalDate.now())
-                .map(this::toCheckinResponse)
-                .orElse(null);
-        response.nextRetakeDate = nextRetakeDate(plan);
+        response.days = readPlanDays(plan);
+        response.schemaVersion = StringUtils.hasText(plan.schemaVersion) ? plan.schemaVersion : "1.0";
+        response.generationMode = StringUtils.hasText(plan.generationMode) ? plan.generationMode : "LEGACY";
+        response.activatedAt = plan.activatedAt;
+
+        HealthPlanDayContent currentDay = ACTIVE.equals(plan.status) ? currentPlanDay(plan, response.days) : null;
+        if (currentDay != null) {
+            response.dietGoal = currentDietGoal(currentDay);
+            response.sleepGoal = currentSleepGoal(currentDay);
+            response.exerciseGoal = currentExerciseGoal(currentDay);
+            response.observationItems = currentDay.observations;
+        } else {
+            response.dietGoal = readMap(plan.dietGoalJson);
+            response.sleepGoal = readMap(plan.sleepGoalJson);
+            response.exerciseGoal = readMap(plan.exerciseGoalJson);
+            response.observationItems = readStringList(plan.observationItemsJson);
+        }
+
+        response.todayCheckin = ACTIVE.equals(plan.status)
+                ? checkinRepository.findByUserIdAndCheckinDate(plan.userId, LocalDate.now()).map(this::toCheckinResponse).orElse(null)
+                : null;
+        response.nextRetakeDate = ACTIVE.equals(plan.status) ? nextRetakeDate(plan) : null;
         response.personalizationSignals = personalizationSignals(plan.sourceReportId);
         response.createdAt = plan.createdAt;
         response.updatedAt = plan.updatedAt;
         return response;
+    }
+
+    private HealthPlanDayContent currentPlanDay(UserHealthPlanEntity plan, List<HealthPlanDayContent> days) {
+        if (days == null || days.isEmpty()) return null;
+        LocalDate today = LocalDate.now();
+        for (HealthPlanDayContent day : days) {
+            if (today.equals(day.date)) return day;
+        }
+        long offset = ChronoUnit.DAYS.between(plan.startDate, today);
+        int dayIndex = (int) Math.max(0, Math.min(PLAN_DAYS - 1L, offset));
+        return days.get(dayIndex);
+    }
+
+    private Map<String, Object> currentDietGoal(HealthPlanDayContent day) {
+        Map<String, Object> result = new LinkedHashMap<String, Object>();
+        result.put("goal", "第 " + day.dayIndex + " 天饮食安排");
+        List<String> actions = new ArrayList<String>();
+        actions.add("早餐：" + String.join("、", day.diet.breakfast));
+        actions.add("午餐：" + String.join("、", day.diet.lunch));
+        actions.add("晚餐：" + String.join("、", day.diet.dinner));
+        if (!day.diet.avoid.isEmpty()) actions.add("今天尽量避免：" + String.join("、", day.diet.avoid));
+        result.put("actions", actions);
+        result.put("frequency", "今天");
+        result.put("duration", "第 " + day.dayIndex + " 天");
+        return result;
+    }
+
+    private Map<String, Object> currentExerciseGoal(HealthPlanDayContent day) {
+        Map<String, Object> result = new LinkedHashMap<String, Object>();
+        result.put("goal", "第 " + day.dayIndex + " 天运动安排");
+        List<String> actions = new ArrayList<String>();
+        actions.add(day.exercise.activity + " " + day.exercise.durationMinutes + " 分钟");
+        actions.add("强度：" + day.exercise.intensity);
+        if (!day.exercise.warmup.isEmpty()) actions.add("热身：" + String.join("、", day.exercise.warmup));
+        if (!day.exercise.cooldown.isEmpty()) actions.add("放松：" + String.join("、", day.exercise.cooldown));
+        result.put("actions", actions);
+        result.put("frequency", "今天");
+        result.put("duration", day.exercise.durationMinutes + " 分钟");
+        return result;
+    }
+
+    private Map<String, Object> currentSleepGoal(HealthPlanDayContent day) {
+        Map<String, Object> result = new LinkedHashMap<String, Object>();
+        result.put("goal", "建议 " + day.sleep.targetBedtime + " 入睡，" + day.sleep.targetWakeTime + " 起床");
+        result.put("actions", day.sleep.actions);
+        result.put("frequency", "今晚");
+        result.put("duration", "第 " + day.dayIndex + " 天");
+        return result;
+    }
+
+    private List<HealthPlanDayContent> readPlanDays(UserHealthPlanEntity plan) {
+        if (!StringUtils.hasText(plan.planContentJson)) return new ArrayList<HealthPlanDayContent>();
+        try {
+            return objectMapper.readValue(plan.planContentJson, new TypeReference<List<HealthPlanDayContent>>() {});
+        } catch (JsonProcessingException e) {
+            return new ArrayList<HealthPlanDayContent>();
+        }
     }
 
     private List<String> personalizationSignals(Long reportId) {
@@ -291,6 +575,37 @@ public class HealthPlanService {
         if (!StringUtils.hasText(value)) return null;
         String trimmed = value.trim();
         return trimmed.length() > 500 ? trimmed.substring(0, 500) : trimmed;
+    }
+
+    private String cleanText(String value, int maxLength) {
+        if (!StringUtils.hasText(value)) return null;
+        String cleaned = value.trim();
+        return cleaned.length() > maxLength ? cleaned.substring(0, maxLength) : cleaned;
+    }
+
+    private List<String> cleanList(List<String> values, int maxItems, int maxLength) {
+        List<String> result = new ArrayList<String>();
+        if (values == null) return result;
+        for (String value : values) {
+            String cleaned = cleanText(value, maxLength);
+            if (!StringUtils.hasText(cleaned) || result.contains(cleaned)) continue;
+            result.add(cleaned);
+            if (result.size() >= maxItems) break;
+        }
+        return result;
+    }
+
+    private List<String> stringListFromMap(Map<String, Object> map, String key) {
+        List<String> result = new ArrayList<String>();
+        if (map == null) return result;
+        Object value = map.get(key);
+        if (value instanceof List) {
+            for (Object item : (List<?>) value) {
+                String cleaned = cleanText(item == null ? null : String.valueOf(item), 120);
+                if (StringUtils.hasText(cleaned)) result.add(cleaned);
+            }
+        }
+        return result;
     }
 
     private JsonNode readTree(String json) {

@@ -27,6 +27,13 @@ public class HealthPlanResponse {
     public Map<String, Object> exerciseGoal;
     @JsonProperty("observation_items")
     public List<String> observationItems;
+    public List<HealthPlanDayContent> days;
+    @JsonProperty("schema_version")
+    public String schemaVersion;
+    @JsonProperty("generation_mode")
+    public String generationMode;
+    @JsonProperty("activated_at")
+    public LocalDateTime activatedAt;
     @JsonProperty("today_checkin")
     public DailyCheckinResponse todayCheckin;
     @JsonProperty("next_retake_date")
