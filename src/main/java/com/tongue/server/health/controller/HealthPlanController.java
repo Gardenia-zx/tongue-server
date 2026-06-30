@@ -6,6 +6,7 @@ import com.tongue.server.health.dto.DailyCheckinRequest;
 import com.tongue.server.health.dto.DailyCheckinResponse;
 import com.tongue.server.health.dto.HealthPlanDraftUpdateRequest;
 import com.tongue.server.health.dto.HealthPlanResponse;
+import com.tongue.server.health.dto.HealthPlanReviewResponse;
 import com.tongue.server.health.service.HealthPlanService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -52,6 +53,16 @@ public class HealthPlanController {
             @RequestBody HealthPlanDraftUpdateRequest request
     ) {
         return ApiResponse.success(healthPlanService.updateDraft(planId, request));
+    }
+
+    @PostMapping("/api/health-plans/{planId}/review")
+    public ApiResponse<HealthPlanReviewResponse> review(@PathVariable Long planId) {
+        return ApiResponse.success(healthPlanService.reviewDraft(planId));
+    }
+
+    @PostMapping("/api/health-plans/{planId}/generate-detailed")
+    public ApiResponse<HealthPlanResponse> generateDetailed(@PathVariable Long planId) {
+        return ApiResponse.success(healthPlanService.generateDetailedDraft(planId));
     }
 
     @PostMapping("/api/health-plans/{planId}/activate")
