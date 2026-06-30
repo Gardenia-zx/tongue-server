@@ -137,6 +137,51 @@ public class TongueAgentClient {
         }
     }
 
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> processHealthPlan(Map<String, Object> request) {
+        try {
+            Map<String, Object> response = restTemplate.postForObject(
+                    buildHealthPlanUrl(),
+                    request,
+                    Map.class
+            );
+            if (response == null) {
+                throw new BusinessException(
+                        ErrorCode.AGENT_CALL_FAILED,
+                        "Python Agent 健康计划接口返回为空",
+                        null
+                );
+            }
+            return response;
+        } catch (BusinessException ex) {
+            throw ex;
+        } catch (HttpStatusCodeException ex) {
+            throw new BusinessException(
+                    ErrorCode.AGENT_CALL_FAILED,
+                    "调用 Python Agent 健康计划接口失败，HTTP 状态码：" + ex.getRawStatusCode(),
+                    null,
+                    ex
+            );
+        } catch (ResourceAccessException ex) {
+            String message = isTimeout(ex)
+                    ? "AI 健康计划处理超时，请保留当前草稿后稍后重试"
+                    : "无法连接 Python Agent，请确认 tongue-agent 服务已启动";
+            throw new BusinessException(
+                    ErrorCode.AGENT_CALL_FAILED,
+                    message,
+                    null,
+                    ex
+            );
+        } catch (Exception ex) {
+            throw new BusinessException(
+                    ErrorCode.AGENT_CALL_FAILED,
+                    "调用 Python Agent 健康计划接口失败",
+                    null,
+                    ex
+            );
+        }
+    }
+
     private List<ScheduledFuture<?>> scheduleAnalysisProgress(AgentRunRequest request) {
         if (!isDedicatedAnalysisRequest(request) || request.getTaskId() == null) {
             return Collections.emptyList();
@@ -254,6 +299,10 @@ public class TongueAgentClient {
 
     private String buildCompareUrl() {
         return buildUrl(agentProperties.getComparePath(), "/api/v1/agent/report-compare");
+    }
+
+    private String buildHealthPlanUrl() {
+        return buildUrl(agentProperties.getHealthPlanPath(), "/api/v1/agent/health-plan/review");
     }
 
     private String buildUrl(String configuredPath, String defaultPath) {
