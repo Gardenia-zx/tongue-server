@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tongue.server.auth.AuthContext;
+import com.tongue.server.client.TongueAgentClient;
 import com.tongue.server.common.BusinessException;
 import com.tongue.server.common.ErrorCode;
 import com.tongue.server.health.dto.CheckinSummaryResponse;
@@ -13,13 +14,16 @@ import com.tongue.server.health.dto.DailyCheckinResponse;
 import com.tongue.server.health.dto.HealthPlanDayContent;
 import com.tongue.server.health.dto.HealthPlanDraftUpdateRequest;
 import com.tongue.server.health.dto.HealthPlanResponse;
+import com.tongue.server.health.dto.HealthPlanReviewResponse;
 import com.tongue.server.health.entity.UserDailyCheckinEntity;
 import com.tongue.server.health.entity.UserHealthPlanEntity;
 import com.tongue.server.health.repository.UserDailyCheckinRepository;
 import com.tongue.server.health.repository.UserHealthPlanRepository;
 import com.tongue.server.notification.service.NotificationService;
 import com.tongue.server.tongue.entity.TongueReportEntity;
+import com.tongue.server.tongue.entity.UserStateSnapshotEntity;
 import com.tongue.server.tongue.repository.TongueReportRepository;
+import com.tongue.server.tongue.repository.UserStateSnapshotRepository;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -47,22 +51,28 @@ public class HealthPlanService {
     private static final int PLAN_DAYS = 7;
 
     private final TongueReportRepository reportRepository;
+    private final UserStateSnapshotRepository stateSnapshotRepository;
     private final UserHealthPlanRepository planRepository;
     private final UserDailyCheckinRepository checkinRepository;
     private final NotificationService notificationService;
+    private final TongueAgentClient tongueAgentClient;
     private final ObjectMapper objectMapper;
 
     public HealthPlanService(
             TongueReportRepository reportRepository,
+            UserStateSnapshotRepository stateSnapshotRepository,
             UserHealthPlanRepository planRepository,
             UserDailyCheckinRepository checkinRepository,
             NotificationService notificationService,
+            TongueAgentClient tongueAgentClient,
             ObjectMapper objectMapper
     ) {
         this.reportRepository = reportRepository;
+        this.stateSnapshotRepository = stateSnapshotRepository;
         this.planRepository = planRepository;
         this.checkinRepository = checkinRepository;
         this.notificationService = notificationService;
+        this.tongueAgentClient = tongueAgentClient;
         this.objectMapper = objectMapper;
     }
 
@@ -76,8 +86,7 @@ public class HealthPlanService {
     @Transactional(readOnly = true)
     public HealthPlanResponse detail(Long planId) {
         Long userId = AuthContext.requireUserId();
-        UserHealthPlanEntity plan = planRepository.findByIdAndUserId(planId, userId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "健康计划不存在", null));
+        UserHealthPlanEntity plan = requireOwnedPlan(planId, userId);
         return toPlanResponse(plan);
     }
 
@@ -121,8 +130,7 @@ public class HealthPlanService {
     @Transactional
     public HealthPlanResponse updateDraft(Long planId, HealthPlanDraftUpdateRequest request) {
         Long userId = AuthContext.requireUserId();
-        UserHealthPlanEntity plan = planRepository.findByIdAndUserId(planId, userId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "健康计划不存在", null));
+        UserHealthPlanEntity plan = requireOwnedPlan(planId, userId);
         requireDraft(plan);
         if (request == null) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "计划内容不能为空", null);
@@ -134,11 +142,63 @@ public class HealthPlanService {
         return toPlanResponse(planRepository.save(plan));
     }
 
+    @Transactional(readOnly = true)
+    public HealthPlanReviewResponse reviewDraft(Long planId) {
+        Long userId = AuthContext.requireUserId();
+        UserHealthPlanEntity plan = requireOwnedPlan(planId, userId);
+        requireDraft(plan);
+
+        Map<String, Object> response = tongueAgentClient.processHealthPlan(
+                buildAgentPlanRequest(plan, "review")
+        );
+        return toReviewResponse(response);
+    }
+
+    @Transactional
+    public HealthPlanResponse generateDetailedDraft(Long planId) {
+        Long userId = AuthContext.requireUserId();
+        UserHealthPlanEntity plan = requireOwnedPlan(planId, userId);
+        requireDraft(plan);
+
+        Map<String, Object> response = tongueAgentClient.processHealthPlan(
+                buildAgentPlanRequest(plan, "generate_detailed")
+        );
+        String agentStatus = text(response.get("status"));
+        if (!"COMPLETED".equals(agentStatus)) {
+            throw new BusinessException(
+                    ErrorCode.AGENT_CALL_FAILED,
+                    textOrDefault(response.get("summary"), "AI 未能生成有效的 7 天计划，原草稿未修改"),
+                    null
+            );
+        }
+
+        List<HealthPlanDayContent> generatedDays;
+        try {
+            generatedDays = objectMapper.convertValue(
+                    response.get("days"),
+                    new TypeReference<List<HealthPlanDayContent>>() {}
+            );
+        } catch (IllegalArgumentException ex) {
+            throw new BusinessException(
+                    ErrorCode.AGENT_CALL_FAILED,
+                    "AI 返回的健康计划结构无法解析，原草稿未修改",
+                    null,
+                    ex
+            );
+        }
+
+        List<HealthPlanDayContent> sanitized = sanitizeDays(generatedDays, plan.startDate);
+        validateDetailedGeneration(sanitized);
+
+        plan.planContentJson = writeJson(sanitized);
+        plan.generationMode = "AI_DETAILED";
+        return toPlanResponse(planRepository.save(plan));
+    }
+
     @Transactional
     public HealthPlanResponse activate(Long planId) {
         Long userId = AuthContext.requireUserId();
-        UserHealthPlanEntity plan = planRepository.findByIdAndUserId(planId, userId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "健康计划不存在", null));
+        UserHealthPlanEntity plan = requireOwnedPlan(planId, userId);
         requireDraft(plan);
 
         LocalDate today = LocalDate.now();
@@ -164,8 +224,7 @@ public class HealthPlanService {
     @Transactional
     public HealthPlanResponse close(Long planId) {
         Long userId = AuthContext.requireUserId();
-        UserHealthPlanEntity plan = planRepository.findByIdAndUserId(planId, userId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "健康计划不存在", null));
+        UserHealthPlanEntity plan = requireOwnedPlan(planId, userId);
         boolean wasActive = ACTIVE.equals(plan.status);
         plan.status = CLOSED;
         plan.closedAt = LocalDateTime.now();
@@ -260,6 +319,54 @@ public class HealthPlanService {
         return payload;
     }
 
+    private Map<String, Object> buildAgentPlanRequest(UserHealthPlanEntity plan, String mode) {
+        TongueReportEntity report = reportRepository.findByIdAndUserIdAndDeletedAtIsNull(plan.sourceReportId, plan.userId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "健康计划来源报告不存在", null));
+        UserStateSnapshotEntity snapshot = stateSnapshotRepository
+                .findByReportIdAndUserId(plan.sourceReportId, plan.userId)
+                .orElse(null);
+
+        Map<String, Object> request = new LinkedHashMap<String, Object>();
+        request.put("mode", mode);
+        request.put("plan_id", plan.id);
+        request.put("source_report_id", plan.sourceReportId);
+        request.put("plan_days", readPlanDays(plan));
+        request.put("draft_report", readObjectMap(report.draftReportJson));
+        request.put("state_snapshot", snapshot == null ? null : snapshotMap(snapshot));
+        request.put("personalization_signals", personalizationSignals(plan.sourceReportId));
+        return request;
+    }
+
+    private Map<String, Object> snapshotMap(UserStateSnapshotEntity snapshot) {
+        Map<String, Object> result = new LinkedHashMap<String, Object>();
+        result.put("observation_window", snapshot.observationWindow);
+        result.put("sleep_status", snapshot.sleepStatus);
+        result.put("digestion_status", snapshot.digestionStatus);
+        result.put("bowel_status", snapshot.bowelStatus);
+        result.put("current_states", readStringList(snapshot.currentStatesJson));
+        result.put("health_goals", readStringList(snapshot.healthGoalsJson));
+        result.put("free_description", snapshot.freeDescription);
+        result.put("skipped", Boolean.TRUE.equals(snapshot.skipped));
+        return result;
+    }
+
+    private HealthPlanReviewResponse toReviewResponse(Map<String, Object> response) {
+        HealthPlanReviewResponse result = new HealthPlanReviewResponse();
+        result.status = textOrDefault(response.get("status"), "FAILED");
+        result.summary = textOrDefault(response.get("summary"), "AI 未返回有效的评估结论");
+        result.issues = stringList(response.get("issues"));
+        result.suggestions = stringList(response.get("suggestions"));
+        result.recommendedAction = text(response.get("recommended_action"));
+        if (!("REASONABLE".equals(result.status)
+                || "NEEDS_IMPROVEMENT".equals(result.status)
+                || "FAILED".equals(result.status))) {
+            result.status = "FAILED";
+            result.summary = "AI 返回了无法识别的评估状态";
+            result.recommendedAction = null;
+        }
+        return result;
+    }
+
     private List<HealthPlanDayContent> buildDraftDays(PlanPayload payload, LocalDate startDate) {
         List<HealthPlanDayContent> days = new ArrayList<HealthPlanDayContent>();
         List<List<String>> breakfasts = Arrays.asList(
@@ -322,12 +429,8 @@ public class HealthPlanService {
 
     private List<String> mergePlanActions(List<String> primary, List<String> fallback, int limit) {
         List<String> result = new ArrayList<String>();
-        for (String item : primary) {
-            addUnique(result, item, limit);
-        }
-        for (String item : fallback) {
-            addUnique(result, item, limit);
-        }
+        for (String item : primary) addUnique(result, item, limit);
+        for (String item : fallback) addUnique(result, item, limit);
         return result;
     }
 
@@ -398,9 +501,41 @@ public class HealthPlanService {
         }
     }
 
+    private void validateDetailedGeneration(List<HealthPlanDayContent> days) {
+        try {
+            validateForActivation(days);
+            for (HealthPlanDayContent day : days) {
+                int index = day.dayIndex == null ? 0 : day.dayIndex;
+                if (day.diet.avoid.isEmpty()
+                        || day.exercise.warmup.isEmpty()
+                        || day.exercise.cooldown.isEmpty()
+                        || day.observations.isEmpty()) {
+                    throw new BusinessException(
+                            ErrorCode.AGENT_CALL_FAILED,
+                            "AI 生成的第 " + index + " 天计划缺少避免项、热身、放松或观察项，原草稿未修改",
+                            null
+                    );
+                }
+            }
+        } catch (BusinessException ex) {
+            if (ex.getErrorCode() == ErrorCode.AGENT_CALL_FAILED) throw ex;
+            throw new BusinessException(
+                    ErrorCode.AGENT_CALL_FAILED,
+                    "AI 生成的 7 天计划不完整，原草稿未修改：" + ex.getMessage(),
+                    null,
+                    ex
+            );
+        }
+    }
+
+    private UserHealthPlanEntity requireOwnedPlan(Long planId, Long userId) {
+        return planRepository.findByIdAndUserId(planId, userId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "健康计划不存在", null));
+    }
+
     private void requireDraft(UserHealthPlanEntity plan) {
         if (!DRAFT.equals(plan.status)) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "只有计划草稿可以编辑或启用", null);
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "只有计划草稿可以编辑、评估或启用", null);
         }
     }
 
@@ -596,14 +731,15 @@ public class HealthPlanService {
     }
 
     private List<String> stringListFromMap(Map<String, Object> map, String key) {
+        return map == null ? new ArrayList<String>() : stringList(map.get(key));
+    }
+
+    private List<String> stringList(Object value) {
         List<String> result = new ArrayList<String>();
-        if (map == null) return result;
-        Object value = map.get(key);
-        if (value instanceof List) {
-            for (Object item : (List<?>) value) {
-                String cleaned = cleanText(item == null ? null : String.valueOf(item), 120);
-                if (StringUtils.hasText(cleaned)) result.add(cleaned);
-            }
+        if (!(value instanceof List)) return result;
+        for (Object item : (List<?>) value) {
+            String cleaned = cleanText(item == null ? null : String.valueOf(item), 500);
+            if (StringUtils.hasText(cleaned)) result.add(cleaned);
         }
         return result;
     }
@@ -641,9 +777,7 @@ public class HealthPlanService {
         List<String> result = new ArrayList<String>();
         if (node == null || !node.isArray()) return result;
         for (JsonNode item : node) {
-            if (item.isTextual() && StringUtils.hasText(item.asText())) {
-                result.add(item.asText());
-            }
+            if (item.isTextual() && StringUtils.hasText(item.asText())) result.add(item.asText());
         }
         return result;
     }
@@ -665,6 +799,10 @@ public class HealthPlanService {
         }
     }
 
+    private Map<String, Object> readObjectMap(String json) {
+        return readMap(json);
+    }
+
     private List<String> readStringList(String json) {
         if (!StringUtils.hasText(json)) return new ArrayList<String>();
         try {
@@ -681,6 +819,15 @@ public class HealthPlanService {
         } catch (JsonProcessingException e) {
             return null;
         }
+    }
+
+    private String text(Object value) {
+        return value == null ? "" : String.valueOf(value).trim();
+    }
+
+    private String textOrDefault(Object value, String fallback) {
+        String result = text(value);
+        return StringUtils.hasText(result) ? result : fallback;
     }
 
     static class PlanPayload {
