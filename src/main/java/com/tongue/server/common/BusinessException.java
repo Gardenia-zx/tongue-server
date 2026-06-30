@@ -23,6 +23,10 @@ public class BusinessException extends RuntimeException {
         return code;
     }
 
+    public int getErrorCode() {
+        return code;
+    }
+
     public String getTraceId() {
         return traceId;
     }
