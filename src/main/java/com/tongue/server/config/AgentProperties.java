@@ -9,6 +9,7 @@ public class AgentProperties {
     private String runPath = "/api/v1/agent/run";
     private String ackPath = "/api/v1/agent/turns/ack";
     private String comparePath = "/api/v1/agent/report-compare";
+    private String healthPlanPath = "/api/v1/agent/health-plan/review";
     private int connectTimeoutMillis = 10000;
     private int readTimeoutMillis = 240000;
 
@@ -42,6 +43,14 @@ public class AgentProperties {
 
     public void setComparePath(String comparePath) {
         this.comparePath = comparePath;
+    }
+
+    public String getHealthPlanPath() {
+        return healthPlanPath;
+    }
+
+    public void setHealthPlanPath(String healthPlanPath) {
+        this.healthPlanPath = healthPlanPath;
     }
 
     public int getConnectTimeoutMillis() {
