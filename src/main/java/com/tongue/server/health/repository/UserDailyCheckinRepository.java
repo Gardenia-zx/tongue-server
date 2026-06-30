@@ -15,4 +15,6 @@ public interface UserDailyCheckinRepository extends JpaRepository<UserDailyCheck
             LocalDate startDate,
             LocalDate endDate
     );
+
+    List<UserDailyCheckinEntity> findByUserIdAndPlanIdOrderByCheckinDateAsc(Long userId, Long planId);
 }

@@ -13,6 +13,7 @@ import com.tongue.server.health.dto.DailyCheckinRequest;
 import com.tongue.server.health.dto.DailyCheckinResponse;
 import com.tongue.server.health.dto.HealthPlanDayContent;
 import com.tongue.server.health.dto.HealthPlanDraftUpdateRequest;
+import com.tongue.server.health.dto.HealthPlanExecutionSummaryResponse;
 import com.tongue.server.health.dto.HealthPlanResponse;
 import com.tongue.server.health.dto.HealthPlanReviewResponse;
 import com.tongue.server.health.entity.UserDailyCheckinEntity;
@@ -84,6 +85,15 @@ public class HealthPlanService {
         UserHealthPlanEntity plan = planRepository.findByIdAndUserId(planId, userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "健康计划不存在", null));
         return toPlanResponse(plan);
+    }
+
+    @Transactional(readOnly = true)
+    public HealthPlanExecutionSummaryResponse executionSummary(Long planId) {
+        Long userId = AuthContext.requireUserId();
+        UserHealthPlanEntity plan = planRepository.findByIdAndUserId(planId, userId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "健康计划不存在", null));
+        List<UserDailyCheckinEntity> rows = checkinRepository.findByUserIdAndPlanIdOrderByCheckinDateAsc(userId, plan.id);
+        return buildExecutionSummary(plan, rows, latestRetakeReport(userId, plan), LocalDate.now());
     }
 
     @Transactional
@@ -249,25 +259,35 @@ public class HealthPlanService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.BAD_REQUEST, "当前没有进行中的健康计划", null));
         LocalDate today = LocalDate.now();
 
-        if (checkinRepository.findByUserIdAndCheckinDate(userId, today).isPresent()) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "今天已经记录了，请明天再来打卡", null);
-        }
-
-        UserDailyCheckinEntity entity = new UserDailyCheckinEntity();
-        entity.userId = userId;
+        UserDailyCheckinEntity entity = checkinRepository.findByUserIdAndCheckinDate(userId, today)
+                .orElseGet(() -> {
+                    UserDailyCheckinEntity created = new UserDailyCheckinEntity();
+                    created.userId = userId;
+                    created.planId = plan.id;
+                    created.checkinDate = today;
+                    return created;
+                });
         entity.planId = plan.id;
-        entity.checkinDate = today;
+        applyCheckinRequest(entity, request);
+
+        try {
+            return toCheckinResponse(checkinRepository.saveAndFlush(entity));
+        } catch (DataIntegrityViolationException ex) {
+            UserDailyCheckinEntity raced = checkinRepository.findByUserIdAndCheckinDate(userId, today)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.BAD_REQUEST, "今天打卡保存失败，请稍后重试", null, ex));
+            raced.planId = plan.id;
+            applyCheckinRequest(raced, request);
+            return toCheckinResponse(checkinRepository.saveAndFlush(raced));
+        }
+    }
+
+    void applyCheckinRequest(UserDailyCheckinEntity entity, DailyCheckinRequest request) {
+        if (request == null) request = new DailyCheckinRequest();
         entity.dietDone = Boolean.TRUE.equals(request.dietDone);
         entity.sleepDone = Boolean.TRUE.equals(request.sleepDone);
         entity.exerciseDone = Boolean.TRUE.equals(request.exerciseDone);
         entity.observationJson = writeJson(request.observation);
         entity.note = trimToNull(request.note);
-
-        try {
-            return toCheckinResponse(checkinRepository.saveAndFlush(entity));
-        } catch (DataIntegrityViolationException ex) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "今天已经记录了，请明天再来打卡", null, ex);
-        }
     }
 
     @Transactional(readOnly = true)
@@ -294,6 +314,58 @@ public class HealthPlanService {
         response.sleepRate = rate(sleep, safeDays);
         response.exerciseRate = rate(exercise, safeDays);
         response.retakeCompleted = retakeCompleted(userId);
+        return response;
+    }
+
+    HealthPlanExecutionSummaryResponse buildExecutionSummary(
+            UserHealthPlanEntity plan,
+            List<UserDailyCheckinEntity> rows,
+            TongueReportEntity retakeReport,
+            LocalDate today
+    ) {
+        LocalDate startDate = plan.startDate == null ? today : plan.startDate;
+        int elapsedDays = elapsedDays(plan, today);
+        LocalDate windowEnd = elapsedDays <= 0
+                ? startDate.minusDays(1)
+                : startDate.plusDays(elapsedDays - 1L);
+        Set<LocalDate> checkedDates = new HashSet<LocalDate>();
+        int checkin = 0;
+        int diet = 0;
+        int sleep = 0;
+        int exercise = 0;
+        for (UserDailyCheckinEntity row : rows == null ? new ArrayList<UserDailyCheckinEntity>() : rows) {
+            if (row.checkinDate == null
+                    || row.checkinDate.isBefore(startDate)
+                    || row.checkinDate.isAfter(windowEnd)) {
+                continue;
+            }
+            checkin += 1;
+            checkedDates.add(row.checkinDate);
+            if (Boolean.TRUE.equals(row.dietDone)) diet += 1;
+            if (Boolean.TRUE.equals(row.sleepDone)) sleep += 1;
+            if (Boolean.TRUE.equals(row.exerciseDone)) exercise += 1;
+        }
+
+        HealthPlanExecutionSummaryResponse response = new HealthPlanExecutionSummaryResponse();
+        response.planId = plan.id;
+        response.sourceReportId = plan.sourceReportId;
+        response.retakeReportId = retakeReport == null ? null : retakeReport.id;
+        response.status = plan.status;
+        response.startDate = plan.startDate;
+        response.endDate = plan.endDate;
+        response.elapsedDays = elapsedDays;
+        response.totalDays = PLAN_DAYS;
+        response.checkinCount = checkin;
+        response.checkinRate = elapsedDays <= 0 ? 0.0 : rate(checkin, elapsedDays);
+        response.dietRate = elapsedDays <= 0 ? 0.0 : rate(diet, elapsedDays);
+        response.sleepRate = elapsedDays <= 0 ? 0.0 : rate(sleep, elapsedDays);
+        response.exerciseRate = elapsedDays <= 0 ? 0.0 : rate(exercise, elapsedDays);
+        response.retakeCompleted = retakeReport != null;
+        for (int index = 0; index < elapsedDays; index++) {
+            LocalDate date = startDate.plusDays(index);
+            if (!checkedDates.contains(date)) response.missedDates.add(date);
+        }
+        response.recommendation = executionRecommendation(response);
         return response;
     }
 
@@ -654,12 +726,38 @@ public class HealthPlanService {
 
     private boolean retakeCompleted(Long userId) {
         UserHealthPlanEntity plan = planRepository.findFirstByUserIdAndStatusOrderByCreatedAtDesc(userId, ACTIVE).orElse(null);
-        if (plan == null) return false;
+        return plan != null && latestRetakeReport(userId, plan) != null;
+    }
+
+    private TongueReportEntity latestRetakeReport(Long userId, UserHealthPlanEntity plan) {
+        if (plan == null || plan.startDate == null) return null;
         TongueReportEntity latest = reportRepository.findFirstByUserIdAndDeletedAtIsNullOrderByCreatedAtDesc(userId).orElse(null);
-        return latest != null
-                && !latest.id.equals(plan.sourceReportId)
-                && latest.createdAt != null
-                && !latest.createdAt.toLocalDate().isBefore(plan.startDate);
+        if (latest == null || latest.createdAt == null || latest.id == null || latest.id.equals(plan.sourceReportId)) {
+            return null;
+        }
+        return latest.createdAt.toLocalDate().isBefore(plan.startDate) ? null : latest;
+    }
+
+    private int elapsedDays(UserHealthPlanEntity plan, LocalDate today) {
+        if (plan.startDate == null || today == null || today.isBefore(plan.startDate)) return 0;
+        if (CLOSED.equals(plan.status) || (plan.endDate != null && today.isAfter(plan.endDate))) return PLAN_DAYS;
+        return Math.min(PLAN_DAYS, (int) ChronoUnit.DAYS.between(plan.startDate, today) + 1);
+    }
+
+    private String executionRecommendation(HealthPlanExecutionSummaryResponse summary) {
+        if (summary.retakeCompleted) {
+            return "已完成复拍，可以查看两次报告对比，重点关注新增、消失和持续存在的舌象特征。";
+        }
+        if (summary.elapsedDays >= PLAN_DAYS) {
+            if (summary.checkinRate >= 0.7) {
+                return "本轮计划执行较完整，建议进行一次复拍，用新报告验证变化趋势。";
+            }
+            return "本轮计划存在未记录日期，建议先回顾执行困难点，再复拍并调整下一轮计划。";
+        }
+        if (summary.checkinCount == 0) {
+            return "计划还在开始阶段，先完成今天的饮食、睡眠和运动记录。";
+        }
+        return "继续保持每日记录，计划第 3 天或第 7 天复拍更适合做对比。";
     }
 
     private int clampDays(int days) {

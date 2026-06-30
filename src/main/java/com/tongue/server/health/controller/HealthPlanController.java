@@ -5,6 +5,7 @@ import com.tongue.server.health.dto.CheckinSummaryResponse;
 import com.tongue.server.health.dto.DailyCheckinRequest;
 import com.tongue.server.health.dto.DailyCheckinResponse;
 import com.tongue.server.health.dto.HealthPlanDraftUpdateRequest;
+import com.tongue.server.health.dto.HealthPlanExecutionSummaryResponse;
 import com.tongue.server.health.dto.HealthPlanResponse;
 import com.tongue.server.health.dto.HealthPlanReviewResponse;
 import com.tongue.server.health.service.HealthPlanService;
@@ -35,6 +36,11 @@ public class HealthPlanController {
     @GetMapping("/api/health-plans/{planId}")
     public ApiResponse<HealthPlanResponse> detail(@PathVariable Long planId) {
         return ApiResponse.success(healthPlanService.detail(planId));
+    }
+
+    @GetMapping("/api/health-plans/{planId}/execution-summary")
+    public ApiResponse<HealthPlanExecutionSummaryResponse> executionSummary(@PathVariable Long planId) {
+        return ApiResponse.success(healthPlanService.executionSummary(planId));
     }
 
     @PostMapping("/api/health-plans/from-report/{reportId}")
